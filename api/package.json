@@ -1,0 +1,19 @@
+{
+  "name": "hedera-proxy-api",
+  "version": "1.0.0",
+  "description": "Proxy API for Hedera RPC calls to avoid CORS issues",
+  "main": "hashioProxy.js",
+  "type": "module",
+  "scripts": {
+    "start": "node hashioProxy.js",
+    "dev": "nodemon hashioProxy.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "node-fetch": "^3.3.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
