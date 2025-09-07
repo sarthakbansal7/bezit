@@ -45,5 +45,5 @@ export const convertTokenToUSD = (tokenAmount: string | number, tokenPrice: numb
 };
 
 // Backward compatibility aliases
-export const fetchHBARPrice = fetchTokenPrice;
-export const convertHBARToUSD = convertTokenToUSD;
+export const fetchETHPrice = fetchTokenPrice;
+export const convertETHToUSD = convertTokenToUSD;
