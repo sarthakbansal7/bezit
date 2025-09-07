@@ -182,29 +182,30 @@ const Issuer: React.FC = () => {
       // Create contract instance
       const contract = new ethers.Contract(ADMIN_CONTRACT, ADMIN_ABI, signer);
       
-      // Verify contract exists
+      // Verify contract exists with better error handling
       try {
+        console.log('🔍 Verifying admin contract...');
         const code = await signer.provider.getCode(ADMIN_CONTRACT);
         if (code === '0x') {
           console.error('❌ No contract found at address:', ADMIN_CONTRACT);
           toast.error('Admin contract not found at the specified address');
           return;
         }
-        console.log('✅ Contract verified at address:', ADMIN_CONTRACT);
-      } catch (error) {
-        console.error('❌ Error verifying contract:', error);
-        toast.error('Failed to verify admin contract');
-        return;
+        console.log('✅ Admin contract verified at address:', ADMIN_CONTRACT);
+      } catch (verifyError: any) {
+        console.warn('⚠️ Contract verification failed, but proceeding anyway:', verifyError.message);
+        // Don't return here - proceed with contract initialization even if verification fails
+        // This handles RPC issues that don't necessarily mean the contract doesn't exist
       }
       
       setAdminContract(contract);
       console.log('✅ Admin contract initialized successfully');
       
       // Initialize issuer and marketplace contracts
-      await initializeIssuerAndMarketplaceContracts();
+      const marketplaceContractInstance = await initializeIssuerAndMarketplaceContracts();
       
       // Now fetch contract data and check authorization
-      await fetchContractDataAndCheckAuth(contract);
+      await fetchContractDataAndCheckAuth(contract, marketplaceContractInstance || undefined);
       
     } catch (error) {
       console.error('❌ Error initializing admin contract:', error);
@@ -213,47 +214,60 @@ const Issuer: React.FC = () => {
   };
 
   // Initialize issuer and marketplace contracts
-  const initializeIssuerAndMarketplaceContracts = async () => {
+  const initializeIssuerAndMarketplaceContracts = async (): Promise<ethers.Contract | null> => {
     try {
       if (!signer) {
         console.log('❌ Signer not available');
-        return;
+        return null;
       }
 
       console.log('🔄 Initializing issuer and marketplace contracts...');
       
       // Initialize issuer contract
       const issuerContractInstance = new ethers.Contract(ISSUER_CONTRACT, ISSUER_ABI, signer);
-      const issuerCode = await signer.provider.getCode(ISSUER_CONTRACT);
-      if (issuerCode === '0x') {
-        console.error('❌ No issuer contract found at address:', ISSUER_CONTRACT);
-        toast.error('Issuer contract not found');
-        return;
+      try {
+        const issuerCode = await signer.provider.getCode(ISSUER_CONTRACT);
+        if (issuerCode === '0x') {
+          console.error('❌ No issuer contract found at address:', ISSUER_CONTRACT);
+          toast.error('Issuer contract not found');
+          return null;
+        }
+        console.log('✅ Issuer contract verified at address:', ISSUER_CONTRACT);
+      } catch (verifyError: any) {
+        console.warn('⚠️ Issuer contract verification failed, but proceeding anyway:', verifyError.message);
       }
       setIssuerContract(issuerContractInstance);
       console.log('✅ Issuer contract initialized:', ISSUER_CONTRACT);
 
       // Initialize marketplace contract
       const marketplaceContractInstance = new ethers.Contract(MARKETPLACE_CONTRACT, MARKETPLACE_ABI, signer);
-      const marketplaceCode = await signer.provider.getCode(MARKETPLACE_CONTRACT);
-      if (marketplaceCode === '0x') {
-        console.error('❌ No marketplace contract found at address:', MARKETPLACE_CONTRACT);
-        toast.error('Marketplace contract not found');
-        return;
+      try {
+        const marketplaceCode = await signer.provider.getCode(MARKETPLACE_CONTRACT);
+        if (marketplaceCode === '0x') {
+          console.error('❌ No marketplace contract found at address:', MARKETPLACE_CONTRACT);
+          toast.error('Marketplace contract not found');
+          return null;
+        }
+        console.log('✅ Marketplace contract verified at address:', MARKETPLACE_CONTRACT);
+      } catch (verifyError: any) {
+        console.warn('⚠️ Marketplace contract verification failed, but proceeding anyway:', verifyError.message);
       }
       setMarketplaceContract(marketplaceContractInstance);
       console.log('✅ Marketplace contract initialized:', MARKETPLACE_CONTRACT);
 
       console.log('✅ All contracts initialized successfully');
       
+      return marketplaceContractInstance;
+      
     } catch (error) {
       console.error('❌ Error initializing contracts:', error);
       toast.error('Failed to initialize contracts');
+      return null;
     }
   };
 
   // Function to fetch contract data and check authorization
-  const fetchContractDataAndCheckAuth = async (contract?: ethers.Contract) => {
+  const fetchContractDataAndCheckAuth = async (contract?: ethers.Contract, marketplaceContractInstance?: ethers.Contract) => {
     const contractToUse = contract || adminContract;
     
     if (!contractToUse) {
@@ -301,7 +315,7 @@ const Issuer: React.FC = () => {
           toast.success('Welcome, authorized issuer!');
           
           // Fetch portfolio listings for the authorized issuer
-          await fetchPortfolioListings();
+          await fetchPortfolioListings(marketplaceContractInstance);
         } else {
           console.log('❌ Connected wallet is not authorized as issuer');
           console.log('Connected address:', address);
@@ -334,9 +348,18 @@ const Issuer: React.FC = () => {
   };
 
   // Fetch portfolio listings for the connected issuer
-  const fetchPortfolioListings = async () => {
-    if (!marketplaceContract || !address) {
-      console.log('❌ Marketplace contract not initialized or address not available');
+  const fetchPortfolioListings = async (marketplaceContractInstance?: ethers.Contract) => {
+    if (!address) {
+      console.log('❌ Address not available');
+      return;
+    }
+
+    // Use passed contract instance or fall back to state
+    const contractToUse = marketplaceContractInstance || marketplaceContract;
+
+    if (!contractToUse) {
+      console.log('❌ Marketplace contract not available');
+      toast.error('Marketplace contract not available');
       return;
     }
 
@@ -344,9 +367,27 @@ const Issuer: React.FC = () => {
     console.log('🔄 Fetching portfolio listings for issuer:', address);
 
     try {
-      // Call getAllListings from marketplace contract
-      const listingsData = await marketplaceContract.getAllListings();
-      console.log('📋 Raw listings data from contract:', listingsData);
+      // Call getAllListings from marketplace contract with retry logic
+      let listingsData;
+      let retryCount = 0;
+      const maxRetries = 3;
+      
+      while (retryCount < maxRetries) {
+        try {
+          console.log(`📞 Calling getAllListings... (attempt ${retryCount + 1}/${maxRetries})`);
+          listingsData = await contractToUse.getAllListings();
+          console.log('📋 Raw listings data from contract:', listingsData);
+          break; // Success, exit retry loop
+        } catch (rpcError: any) {
+          console.warn(`⚠️ getAllListings attempt ${retryCount + 1} failed:`, rpcError.message);
+          retryCount++;
+          if (retryCount < maxRetries) {
+            await new Promise(resolve => setTimeout(resolve, 1000 * retryCount)); // Exponential backoff
+          } else {
+            throw rpcError; // Re-throw on final attempt
+          }
+        }
+      }
 
       // Handle different response formats from getAllListings
       let tokenIds, issuers, amounts, prices;
@@ -1051,7 +1092,7 @@ const Issuer: React.FC = () => {
                   </div>
                   <div className="flex justify-between">
                     <span className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>Token Standard:</span>
-                    <span className={`${isDarkMode ? 'text-white' : 'text-gray-900'} font-medium`}>HTS NFT</span>
+                    <span className={`${isDarkMode ? 'text-white' : 'text-gray-900'} font-medium`}>ERC 1155</span>
                   </div>
                   <div className="flex justify-between">
                     <span className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>Auto-Listing:</span>
@@ -1166,7 +1207,7 @@ const Issuer: React.FC = () => {
                       Your Listed Assets ({portfolioListings.length})
                     </h4>
                     <Button 
-                      onClick={fetchPortfolioListings}
+                      onClick={() => fetchPortfolioListings()}
                       variant="outline"
                       size="sm"
                       disabled={portfolioLoading}
