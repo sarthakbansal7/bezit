@@ -30,6 +30,7 @@ import {
   Leaf,
   Download,
   Filter,
+  RefreshCw,
   Check,
   Star,
   Award,
@@ -75,6 +76,24 @@ interface PortfolioData {
   monthlyIncome: number;
   totalAssets: number;
   activeInvestments: number;
+}
+
+// Transaction history interface
+interface TransactionHistory {
+  hash: string;
+  blockNumber: number;
+  timestamp: number;
+  type: 'buy' | 'sell' | 'listing' | 'transfer';
+  tokenId: string;
+  amount: number;
+  price: string; // in Wei
+  from: string;
+  to: string;
+  gasUsed: string;
+  gasPrice: string;
+  status: 'success' | 'failed' | 'pending';
+  assetName?: string;
+  platformFee?: string;
 }
 
 // Mock data for sections not yet converted to real data
@@ -203,6 +222,10 @@ const Dashboard: React.FC = () => {
   });
   const [loading, setLoading] = useState(false);
 
+  // Transaction history states
+  const [transactionHistory, setTransactionHistory] = useState<TransactionHistory[]>([]);
+  const [transactionLoading, setTransactionLoading] = useState(false);
+
   // Sell modal states
   const [sellModalOpen, setSellModalOpen] = useState(false);
   const [selectedAsset, setSelectedAsset] = useState<UserAsset | null>(null);
@@ -212,6 +235,13 @@ const Dashboard: React.FC = () => {
   // Asset details modal state
   const [detailsModalOpen, setDetailsModalOpen] = useState(false);
   const [selectedAssetForDetails, setSelectedAssetForDetails] = useState<UserAsset | null>(null);
+
+  // Refresh transaction history when switching to transactions tab
+  useEffect(() => {
+    if (activeSection === 'transactions' && isConnected && provider && address) {
+      fetchTransactionHistory();
+    }
+  }, [activeSection, isConnected, provider, address]);
 
   // Connect wallet function
   const connectWallet = async () => {
@@ -227,6 +257,9 @@ const Dashboard: React.FC = () => {
       
       // Load real assets from blockchain
       await fetchUserAssetsFromBlockchain();
+      
+      // Load transaction history
+      await fetchTransactionHistory();
       
     } catch (error: any) {
       console.error('Wallet connection failed:', error);
@@ -499,6 +532,126 @@ const Dashboard: React.FC = () => {
     });
   };
 
+  // Fetch transaction history from marketplace contract events
+  const fetchTransactionHistory = async () => {
+    if (!isConnected || !provider || !address) {
+      console.log('Wallet not connected, cannot fetch transaction history');
+      return;
+    }
+
+    try {
+      setTransactionLoading(true);
+      console.log('🔄 Loading transaction history for:', address);
+
+      // Create marketplace contract instance
+      const marketplaceContract = new ethers.Contract(MARKETPLACE_CONTRACT, MARKETPLACE_ABI, provider);
+      
+      // Get current block number for filtering
+      const currentBlock = await provider.getBlockNumber();
+      const fromBlock = Math.max(0, currentBlock - 10000); // Last ~10000 blocks (~2-3 days on most networks)
+      
+      console.log(`📊 Querying events from block ${fromBlock} to ${currentBlock}`);
+
+      // Query for AssetBought events where user is the buyer
+      const boughtFilter = marketplaceContract.filters.AssetBought(null, address);
+      const boughtEvents = await marketplaceContract.queryFilter(boughtFilter, fromBlock, currentBlock);
+      
+      // Query for AssetSold events where user is the seller
+      const soldFilter = marketplaceContract.filters.AssetSold(null, address);
+      const soldEvents = await marketplaceContract.queryFilter(soldFilter, fromBlock, currentBlock);
+
+      console.log(`Found ${boughtEvents.length} buy events and ${soldEvents.length} sell events`);
+
+      // Process events into transaction history
+      const transactions: TransactionHistory[] = [];
+
+      // Process buy events
+      for (const event of boughtEvents) {
+        const args = event.args;
+        const block = await provider.getBlock(event.blockNumber);
+        const transaction = await provider.getTransaction(event.transactionHash);
+        const receipt = await provider.getTransactionReceipt(event.transactionHash);
+
+        // Get asset name from tokenId (this could be enhanced with metadata lookup)
+        let assetName = `Asset #${args!.tokenId.toString()}`;
+        try {
+          // Try to get asset name from our current assets
+          const existingAsset = userAssets.find(asset => asset.tokenId === args!.tokenId.toString());
+          if (existingAsset) {
+            assetName = existingAsset.name;
+          }
+        } catch (error) {
+          console.log('Could not resolve asset name, using default');
+        }
+
+        transactions.push({
+          hash: event.transactionHash,
+          blockNumber: event.blockNumber,
+          timestamp: block.timestamp * 1000, // Convert to milliseconds
+          type: 'buy',
+          tokenId: args!.tokenId.toString(),
+          amount: args!.amount.toNumber(),
+          price: ethers.utils.formatEther(transaction.value || '0'), // Transaction value in ETH
+          from: transaction.from,
+          to: transaction.to || MARKETPLACE_CONTRACT,
+          gasUsed: receipt.gasUsed.toString(),
+          gasPrice: ethers.utils.formatUnits(transaction.gasPrice || '0', 'gwei'),
+          status: receipt.status === 1 ? 'success' : 'failed',
+          assetName,
+          platformFee: ethers.utils.formatEther(args!.platformFee || '0')
+        });
+      }
+
+      // Process sell events
+      for (const event of soldEvents) {
+        const args = event.args;
+        const block = await provider.getBlock(event.blockNumber);
+        const transaction = await provider.getTransaction(event.transactionHash);
+        const receipt = await provider.getTransactionReceipt(event.transactionHash);
+
+        // Get asset name from tokenId
+        let assetName = `Asset #${args!.tokenId.toString()}`;
+        try {
+          const existingAsset = userAssets.find(asset => asset.tokenId === args!.tokenId.toString());
+          if (existingAsset) {
+            assetName = existingAsset.name;
+          }
+        } catch (error) {
+          console.log('Could not resolve asset name, using default');
+        }
+
+        transactions.push({
+          hash: event.transactionHash,
+          blockNumber: event.blockNumber,
+          timestamp: block.timestamp * 1000, // Convert to milliseconds
+          type: 'sell',
+          tokenId: args!.tokenId.toString(),
+          amount: args!.amount.toNumber(),
+          price: '0', // For sell events, the price would need to be calculated differently
+          from: transaction.from,
+          to: transaction.to || MARKETPLACE_CONTRACT,
+          gasUsed: receipt.gasUsed.toString(),
+          gasPrice: ethers.utils.formatUnits(transaction.gasPrice || '0', 'gwei'),
+          status: receipt.status === 1 ? 'success' : 'failed',
+          assetName,
+          platformFee: ethers.utils.formatEther(args!.platformFee || '0')
+        });
+      }
+
+      // Sort transactions by timestamp (newest first)
+      transactions.sort((a, b) => b.timestamp - a.timestamp);
+      
+      console.log(`✅ Processed ${transactions.length} total transactions`);
+      setTransactionHistory(transactions);
+
+    } catch (error: any) {
+      console.error('❌ Error fetching transaction history:', error);
+      toast.error(`Failed to load transaction history: ${error.message || 'Unknown error'}`);
+    } finally {
+      setTransactionLoading(false);
+    }
+  };
+
   // Sell asset function with real blockchain interaction
   const sellAsset = async () => {
     if (!selectedAsset || !sellAmount || !isConnected || !signer) {
@@ -569,6 +722,9 @@ const Dashboard: React.FC = () => {
       // Refresh user assets to show updated portfolio
       console.log('🔄 Refreshing portfolio after successful sale...');
       await fetchUserAssetsFromBlockchain();
+      
+      // Refresh transaction history to show new transaction
+      await fetchTransactionHistory();
       
     } catch (error: any) {
       console.error('❌ Failed to sell asset:', error);
@@ -1407,6 +1563,15 @@ const Dashboard: React.FC = () => {
                 <p className="text-gray-600 mt-1">View your complete trading and investment history</p>
               </div>
               <div className="flex flex-col sm:flex-row items-start sm:items-center space-y-2 sm:space-y-0 sm:space-x-3">
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={fetchTransactionHistory}
+                  disabled={transactionLoading}
+                >
+                  <RefreshCw className={`w-4 h-4 mr-2 ${transactionLoading ? 'animate-spin' : ''}`} />
+                  {transactionLoading ? 'Loading...' : 'Refresh'}
+                </Button>
                 <Button variant="outline" size="sm">
                   <Download className="w-4 h-4 mr-2" />
                   Export
@@ -1442,57 +1607,113 @@ const Dashboard: React.FC = () => {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200">
-                      {MOCK_TRANSACTIONS.map((transaction, index) => (
-                        <tr key={index} className="hover:bg-gray-50 transition-colors">
-                          <td className="py-3 px-4 md:px-6 text-xs md:text-sm text-gray-900">
-                            <div>
-                              <div className="font-medium">{transaction.date}</div>
-                              <div className="text-gray-500 text-xs">{transaction.time}</div>
-                            </div>
-                          </td>
-                          <td className="py-3 px-4 md:px-6">
-                            <div className="flex items-center space-x-3">
-                              <div className="w-8 h-8 md:w-10 md:h-10 bg-gray-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                                <Building className="w-4 md:w-5 h-4 md:h-5 text-gray-600" />
+                      {transactionLoading ? (
+                        // Loading state
+                        Array.from({ length: 5 }).map((_, index) => (
+                          <tr key={index} className="animate-pulse">
+                            <td className="py-3 px-4 md:px-6">
+                              <div className="h-4 bg-gray-200 rounded w-20"></div>
+                              <div className="h-3 bg-gray-200 rounded w-16 mt-1"></div>
+                            </td>
+                            <td className="py-3 px-4 md:px-6">
+                              <div className="flex items-center space-x-3">
+                                <div className="w-8 h-8 md:w-10 md:h-10 bg-gray-200 rounded-lg"></div>
+                                <div className="flex-1">
+                                  <div className="h-4 bg-gray-200 rounded w-24"></div>
+                                  <div className="h-3 bg-gray-200 rounded w-16 mt-1"></div>
+                                </div>
                               </div>
-                              <div className="min-w-0 flex-1">
-                                <p className="text-xs md:text-sm font-medium text-gray-900 truncate">{transaction.asset}</p>
-                                <p className="text-xs text-gray-500 truncate">{transaction.location}</p>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="py-3 px-4 md:px-6">
-                            <Badge 
-                              variant={transaction.type === 'buy' ? 'default' : transaction.type === 'sell' ? 'secondary' : 'outline'}
-                              className={`text-xs ${
-                                transaction.type === 'buy' ? 'bg-green-100 text-green-800' :
-                                transaction.type === 'sell' ? 'bg-red-100 text-red-800' :
-                                'bg-blue-100 text-blue-800'
-                              }`}
-                            >
-                              {transaction.type.charAt(0).toUpperCase() + transaction.type.slice(1)}
-                            </Badge>
-                          </td>
-                          <td className="py-3 px-4 md:px-6 text-right text-xs md:text-sm font-medium text-gray-900">
-                            {transaction.shares} {transaction.shares === 1 ? 'share' : 'shares'}
-                          </td>
-                          <td className="py-3 px-4 md:px-6 text-right text-xs md:text-sm font-bold text-gray-900">
-                            ${transaction.amount.toLocaleString()}
-                          </td>
-                          <td className="py-3 px-4 md:px-6 text-center">
-                            <Badge 
-                              variant="outline" 
-                              className={`text-xs ${
-                                transaction.status === 'completed' ? 'bg-green-50 text-green-700 border-green-200' :
-                                transaction.status === 'pending' ? 'bg-yellow-50 text-yellow-700 border-yellow-200' :
-                                'bg-red-50 text-red-700 border-red-200'
-                              }`}
-                            >
-                              {transaction.status.charAt(0).toUpperCase() + transaction.status.slice(1)}
-                            </Badge>
+                            </td>
+                            <td className="py-3 px-4 md:px-6">
+                              <div className="h-6 bg-gray-200 rounded w-12"></div>
+                            </td>
+                            <td className="py-3 px-4 md:px-6 text-right">
+                              <div className="h-4 bg-gray-200 rounded w-16 ml-auto"></div>
+                            </td>
+                            <td className="py-3 px-4 md:px-6 text-right">
+                              <div className="h-4 bg-gray-200 rounded w-20 ml-auto"></div>
+                            </td>
+                            <td className="py-3 px-4 md:px-6 text-center">
+                              <div className="h-6 bg-gray-200 rounded w-16 mx-auto"></div>
+                            </td>
+                          </tr>
+                        ))
+                      ) : transactionHistory.length === 0 ? (
+                        // No transactions state
+                        <tr>
+                          <td colSpan={6} className="py-12 text-center text-gray-500">
+                            <Activity className="w-12 h-12 mx-auto mb-4 text-gray-300" />
+                            <p className="text-lg font-medium mb-2">No transactions found</p>
+                            <p className="text-sm">Your transaction history will appear here once you buy or sell assets.</p>
                           </td>
                         </tr>
-                      ))}
+                      ) : (
+                        // Real transaction data
+                        transactionHistory.map((transaction, index) => (
+                          <tr key={transaction.hash} className="hover:bg-gray-50 transition-colors">
+                            <td className="py-3 px-4 md:px-6 text-xs md:text-sm text-gray-900">
+                              <div>
+                                <div className="font-medium">
+                                  {new Date(transaction.timestamp).toLocaleDateString()}
+                                </div>
+                                <div className="text-gray-500 text-xs">
+                                  {new Date(transaction.timestamp).toLocaleTimeString()}
+                                </div>
+                              </div>
+                            </td>
+                            <td className="py-3 px-4 md:px-6">
+                              <div className="flex items-center space-x-3">
+                                <div className="w-8 h-8 md:w-10 md:h-10 bg-gray-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                                  <Building className="w-4 md:w-5 h-4 md:h-5 text-gray-600" />
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-xs md:text-sm font-medium text-gray-900 truncate">
+                                    {transaction.assetName}
+                                  </p>
+                                  <p className="text-xs text-gray-500 truncate">
+                                    Token ID: {transaction.tokenId}
+                                  </p>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="py-3 px-4 md:px-6">
+                              <Badge 
+                                variant={transaction.type === 'buy' ? 'default' : 'secondary'}
+                                className={`text-xs ${
+                                  transaction.type === 'buy' ? 'bg-green-100 text-green-800' :
+                                  'bg-red-100 text-red-800'
+                                }`}
+                              >
+                                {transaction.type.charAt(0).toUpperCase() + transaction.type.slice(1)}
+                              </Badge>
+                            </td>
+                            <td className="py-3 px-4 md:px-6 text-right text-xs md:text-sm font-medium text-gray-900">
+                              {transaction.amount} {transaction.amount === 1 ? 'token' : 'tokens'}
+                            </td>
+                            <td className="py-3 px-4 md:px-6 text-right text-xs md:text-sm font-bold text-gray-900">
+                              {parseFloat(transaction.price).toFixed(4)} ETH
+                              {transaction.platformFee && parseFloat(transaction.platformFee) > 0 && (
+                                <div className="text-xs text-gray-500">
+                                  Fee: {parseFloat(transaction.platformFee).toFixed(4)} ETH
+                                </div>
+                              )}
+                            </td>
+                            <td className="py-3 px-4 md:px-6 text-center">
+                              <Badge 
+                                variant="outline" 
+                                className={`text-xs cursor-pointer ${
+                                  transaction.status === 'success' ? 'bg-green-50 text-green-700 border-green-200' :
+                                  'bg-red-50 text-red-700 border-red-200'
+                                }`}
+                                onClick={() => window.open(`https://arbiscan.io/tx/${transaction.hash}`, '_blank')}
+                                title={`View on Arbiscan: ${transaction.hash}`}
+                              >
+                                {transaction.status === 'success' ? 'Success' : 'Failed'}
+                              </Badge>
+                            </td>
+                          </tr>
+                        ))
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -2196,7 +2417,7 @@ const Dashboard: React.FC = () => {
                   <div>
                     <p className="text-gray-600">Price per Token</p>
                     <p className="font-bold text-green-600">
-                      {(parseFloat(selectedAsset.price) / Math.pow(10, 8)).toFixed(4)} ETH
+                      {(parseFloat(selectedAsset.price) / Math.pow(10, 18)).toFixed(4)} ETH
                     </p>
                   </div>
                 </div>
