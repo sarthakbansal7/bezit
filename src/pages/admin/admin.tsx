@@ -59,6 +59,11 @@ import { Link } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
 import * as authApi from '@/api/authApi';
 import { useWallet } from '@/context/WalletContext';
+import { ethers } from 'ethers';
+import { ADMIN_CONTRACT, NETWORK_CONFIG, ACTIVE_NETWORK } from '@/lib/contractAddress';
+import { ADMIN_ABI } from '@/utils/adminABI';
+import { fetchIPFSContent } from '@/utils/ipfs';
+import { uploadJSONToPinata } from '@/utils/pinata';
 
 // Types for Admin Management
 interface User {
@@ -96,6 +101,11 @@ const Admin: React.FC = () => {
   const [activeTab, setActiveTab] = useState('overview');
   const [issuers, setIssuers] = useState<User[]>([]);
   const [managers, setManagers] = useState<User[]>([]);
+  
+  // Contract state
+  const [adminContract, setAdminContract] = useState<ethers.Contract | null>(null);
+  const [marketplacePaused, setMarketplacePaused] = useState(false);
+  
   const [contractIssuers, setContractIssuers] = useState<{
     addresses: string[], 
     count: number, 
@@ -137,142 +147,403 @@ const Admin: React.FC = () => {
   
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [marketplacePaused, setMarketplacePaused] = useState(false);
   const [assignTokenForm, setAssignTokenForm] = useState({
     tokenId: '',
     managerAddress: ''
   });
 
-  // Demo data initialization
+  // Initialize contract when wallet connects
   useEffect(() => {
-    loadContractData();
-  }, [isConnected]);
+    if (isConnected && signer) {
+      initializeContract();
+    }
+  }, [isConnected, signer]);
 
-  // Load marketplace status on mount
+  // Load contract data when admin contract is initialized
   useEffect(() => {
-    const loadMarketplaceStatus = async () => {
-      try {
-        console.log('🔄 Loading mock marketplace status...');
-        // Mock marketplace is not paused by default
-        setMarketplacePaused(false);
-      } catch (error) {
-        console.error('Error loading marketplace status:', error);
+    if (adminContract) {
+      loadContractData();
+    }
+  }, [adminContract]);
+
+  // Initialize contract
+  const initializeContract = async () => {
+    try {
+      if (!isConnected || !signer) {
+        console.log('❌ Wallet not connected');
+        return;
       }
-    };
-    
-    loadMarketplaceStatus();
-  }, []);
+
+      console.log('🔄 Initializing admin contract...');
+      console.log('Contract address:', ADMIN_CONTRACT);
+      console.log('Network:', ACTIVE_NETWORK);
+      console.log('RPC URL:', NETWORK_CONFIG[ACTIVE_NETWORK].rpcUrl);
+      
+      // Check network
+      const network = await signer.provider.getNetwork();
+      console.log('Connected to network:', network.name, 'Chain ID:', network.chainId);
+      console.log('Expected Chain ID:', NETWORK_CONFIG[ACTIVE_NETWORK].chainId);
+      
+      if (network.chainId !== NETWORK_CONFIG[ACTIVE_NETWORK].chainId) {
+        console.error('❌ Wrong network! Expected Chain ID:', NETWORK_CONFIG[ACTIVE_NETWORK].chainId, 'Got:', network.chainId);
+        toast.error(`Please switch to ${NETWORK_CONFIG[ACTIVE_NETWORK].name} (Chain ID: ${NETWORK_CONFIG[ACTIVE_NETWORK].chainId})`);
+        return;
+      }
+      
+      // Create contract instance
+      const contract = new ethers.Contract(ADMIN_CONTRACT, ADMIN_ABI, signer);
+      
+      // Verify contract exists by checking if it has code
+      try {
+        const code = await signer.provider.getCode(ADMIN_CONTRACT);
+        if (code === '0x') {
+          console.error('❌ No contract found at address:', ADMIN_CONTRACT);
+          toast.error('Admin contract not found at the specified address');
+          return;
+        }
+        console.log('✅ Contract verified at address:', ADMIN_CONTRACT);
+        
+        // Test a simple function call to verify contract is working
+        const owner = await contract.owner();
+        console.log('✅ Contract owner:', owner);
+      } catch (error) {
+        console.error('❌ Error verifying contract:', error);
+        toast.error('Failed to verify contract');
+        return;
+      }
+      
+      setAdminContract(contract);
+      
+      console.log('✅ Admin contract initialized successfully');
+    } catch (error) {
+      console.error('❌ Error initializing contract:', error);
+      console.log('Contract initialization failed, page will still load with limited functionality');
+    }
+  };
 
   const loadContractData = async () => {
-    setIsLoadingContractData(true);
+    if (!adminContract) {
+      console.log('❌ Admin contract not initialized');
+      return;
+    }
+
+    setIsLoading(true);
     
     try {
-      console.log('🔄 Loading mock admin data...');
+      console.log('🔄 Loading contract data from blockchain...');
+      console.log('Contract address:', adminContract.address);
+      console.log('Signer address:', await adminContract.signer.getAddress());
       
-      // Mock contract data
-      const mockContractIssuers = {
-        addresses: ['0x742D35Cc6635Cf532793FAa14d4A6ce8D8c5D93e', '0x8ba1f109551bD432803012645Hgf72FCb4'], 
-        count: 2, 
-        metadata: {
-          '0x742D35Cc6635Cf532793FAa14d4A6ce8D8c5D93e': 'mock-metadata-1',
-          '0x8ba1f109551bD432803012645Hgf72FCb4': 'mock-metadata-2'
+      // Check if we're connected to the right network
+      const network = await adminContract.provider.getNetwork();
+      console.log('Connected to network:', network.name, 'Chain ID:', network.chainId);
+      
+      // Try to call each function individually with better error handling
+      let issuersData, managersData, isMarketplacePaused;
+      
+      try {
+        console.log('📞 Calling getAllIssuers...');
+        issuersData = await adminContract.getAllIssuers();
+        console.log('✅ getAllIssuers result:', issuersData);
+      } catch (error) {
+        console.error('❌ getAllIssuers failed:', error);
+        // Fall back to empty data
+        issuersData = [];
+      }
+      
+      try {
+        console.log('📞 Calling getAllManagers...');
+        managersData = await adminContract.getAllManagers();
+        console.log('✅ getAllManagers result:', managersData);
+      } catch (error) {
+        console.error('❌ getAllManagers failed:', error);
+        // Fall back to empty data
+        managersData = [];
+      }
+      
+      try {
+        console.log('📞 Calling marketplacePaused...');
+        isMarketplacePaused = await adminContract.marketplacePaused();
+        console.log('✅ marketplacePaused result:', isMarketplacePaused);
+      } catch (error) {
+        console.error('❌ marketplacePaused failed:', error);
+        // Fall back to false
+        isMarketplacePaused = false;
+      }
+
+      console.log('📊 Contract Data Received:');
+      console.log('Issuers:', issuersData);
+      console.log('Managers:', managersData);
+      console.log('Marketplace Paused:', isMarketplacePaused);
+
+      // Process issuers data and fetch IPFS metadata
+      const issuerAddresses = issuersData || [];
+      const issuerUsers: User[] = [];
+      
+      console.log('🔄 Fetching IPFS metadata for issuers...');
+      for (let i = 0; i < issuerAddresses.length; i++) {
+        const address = issuerAddresses[i];
+        
+        try {
+          // Get metadata URI from contract
+          const metadataURI = await adminContract.issuerMetadata(address);
+          console.log(`📄 Metadata URI for ${address}:`, metadataURI);
+          
+          if (metadataURI && metadataURI !== '') {
+            // Fetch metadata from IPFS
+            const metadata = await fetchIPFSContent(metadataURI);
+            console.log(`📋 Metadata for ${address}:`, metadata);
+            
+            if (metadata) {
+              issuerUsers.push({
+                id: address,
+                address: address,
+                name: metadata.name || `Issuer ${i + 1}`,
+                email: metadata.email || `issuer${i + 1}@example.com`,
+                role: 'issuer' as const,
+                status: 'active' as const,
+                metadataURI: metadataURI,
+                joinedDate: metadata.joinedDate || '2024-01-01',
+                lastActive: '2024-12-28',
+                tokensManaged: metadata.tokensManaged || 0,
+                totalVolume: metadata.totalVolume || 0
+              });
+            } else {
+              // Fallback if IPFS fetch fails
+              issuerUsers.push({
+                id: address,
+                address: address,
+                name: `Issuer ${i + 1}`,
+                email: `issuer${i + 1}@example.com`,
+                role: 'issuer' as const,
+                status: 'active' as const,
+                metadataURI: metadataURI,
+                joinedDate: '2024-01-01',
+                lastActive: '2024-12-28',
+                tokensManaged: 0,
+                totalVolume: 0
+              });
+            }
+          } else {
+            // No metadata URI
+            issuerUsers.push({
+              id: address,
+              address: address,
+              name: `Issuer ${i + 1}`,
+              email: `issuer${i + 1}@example.com`,
+              role: 'issuer' as const,
+              status: 'active' as const,
+              metadataURI: '',
+              joinedDate: '2024-01-01',
+              lastActive: '2024-12-28',
+              tokensManaged: 0,
+              totalVolume: 0
+            });
+          }
+        } catch (error) {
+          console.error(`❌ Error fetching metadata for issuer ${address}:`, error);
+          // Add issuer without metadata
+          issuerUsers.push({
+            id: address,
+            address: address,
+            name: `Issuer ${i + 1}`,
+            email: `issuer${i + 1}@example.com`,
+            role: 'issuer' as const,
+            status: 'active' as const,
+            metadataURI: '',
+            joinedDate: '2024-01-01',
+            lastActive: '2024-12-28',
+            tokensManaged: 0,
+            totalVolume: 0
+          });
         }
+      }
+
+      // Process managers data and fetch IPFS metadata
+      const managerAddresses = managersData || [];
+      const managerUsers: User[] = [];
+      
+      console.log('🔄 Fetching IPFS metadata for managers...');
+      for (let i = 0; i < managerAddresses.length; i++) {
+        const address = managerAddresses[i];
+        
+        try {
+          // Get metadata URI from contract
+          const metadataURI = await adminContract.managerMetadata(address);
+          console.log(`📄 Manager metadata URI for ${address}:`, metadataURI);
+          
+          if (metadataURI && metadataURI !== '') {
+            // Fetch metadata from IPFS
+            const metadata = await fetchIPFSContent(metadataURI);
+            console.log(`📋 Manager metadata for ${address}:`, metadata);
+            
+            if (metadata) {
+              managerUsers.push({
+                id: address,
+                address: address,
+                name: metadata.name || `Manager ${i + 1}`,
+                email: metadata.email || `manager${i + 1}@example.com`,
+                role: 'manager' as const,
+                status: 'active' as const,
+                metadataURI: metadataURI,
+                joinedDate: metadata.joinedDate || '2024-01-01',
+                lastActive: '2024-12-28',
+                tokensManaged: metadata.tokensManaged || 0,
+                totalVolume: metadata.totalVolume || 0,
+                assignedTokens: metadata.assignedTokens || []
+              });
+            } else {
+              // Fallback if IPFS fetch fails
+              managerUsers.push({
+                id: address,
+                address: address,
+                name: `Manager ${i + 1}`,
+                email: `manager${i + 1}@example.com`,
+                role: 'manager' as const,
+                status: 'active' as const,
+                metadataURI: metadataURI,
+                joinedDate: '2024-01-01',
+                lastActive: '2024-12-28',
+                tokensManaged: 0,
+                totalVolume: 0,
+                assignedTokens: []
+              });
+            }
+          } else {
+            // No metadata URI
+            managerUsers.push({
+              id: address,
+              address: address,
+              name: `Manager ${i + 1}`,
+              email: `manager${i + 1}@example.com`,
+              role: 'manager' as const,
+              status: 'active' as const,
+              metadataURI: '',
+              joinedDate: '2024-01-01',
+              lastActive: '2024-12-28',
+              tokensManaged: 0,
+              totalVolume: 0,
+              assignedTokens: []
+            });
+          }
+        } catch (error) {
+          console.error(`❌ Error fetching metadata for manager ${address}:`, error);
+          // Add manager without metadata
+          managerUsers.push({
+            id: address,
+            address: address,
+            name: `Manager ${i + 1}`,
+            email: `manager${i + 1}@example.com`,
+            role: 'manager' as const,
+            status: 'active' as const,
+            metadataURI: '',
+            joinedDate: '2024-01-01',
+            lastActive: '2024-12-28',
+            tokensManaged: 0,
+            totalVolume: 0,
+            assignedTokens: []
+          });
+        }
+      }
+
+      // Update contract data
+      const contractIssuers = {
+        addresses: issuerAddresses,
+        count: issuerAddresses.length,
+        metadata: {}
+      };
+
+      const contractManagers = {
+        addresses: managerAddresses,
+        count: managerAddresses.length,
+        metadata: {}
+      };
+
+      // Update state with blockchain data
+      setContractIssuers(contractIssuers);
+      setContractManagers(contractManagers);
+      setMarketplacePaused(isMarketplacePaused);
+      setIssuers(issuerUsers);
+      setManagers(managerUsers);
+      
+      // Update system metrics
+      setSystemMetrics({
+        totalIssuers: contractIssuers.count,
+        totalManagers: contractManagers.count,
+        activeTokens: 0,
+        totalVolume: 0,
+        marketplaceStatus: !isMarketplacePaused,
+        platformFees: 0
+      });
+      
+      console.log('✅ Contract data loaded successfully');
+      console.log(`📈 Active Issuers: ${contractIssuers.count}`);
+      console.log(`👥 Property Managers: ${contractManagers.count}`);
+      
+    } catch (error) {
+      console.error('❌ Failed to load contract data:', error);
+      
+      // Fallback to mock data if contract call fails
+      console.log('🔄 Loading fallback mock data...');
+      
+      const mockContractIssuers = {
+        addresses: ['0x742D35Cc6635Cf532793FAa14d4A6ce8D8c5D93e'], 
+        count: 1, 
+        metadata: {}
       };
       
       const mockContractManagers = {
-        addresses: ['0x3456789012345678901234567890123456789012', '0x9876543210987654321098765432109876543210'], 
-        count: 2, 
-        metadata: {
-          '0x3456789012345678901234567890123456789012': 'mock-metadata-3',
-          '0x9876543210987654321098765432109876543210': 'mock-metadata-4'
-        }
+        addresses: ['0x3456789012345678901234567890123456789012'], 
+        count: 1, 
+        metadata: {}
       };
       
       setContractIssuers(mockContractIssuers);
       setContractManagers(mockContractManagers);
       setMarketplacePaused(false);
       
-      // Mock issuer users
-      const issuerUsers: User[] = [
-        {
-          id: '0x742D35Cc6635Cf532793FAa14d4A6ce8D8c5D93e',
-          address: '0x742D35Cc6635Cf532793FAa14d4A6ce8D8c5D93e',
-          name: 'Real Estate Tokens Inc',
-          email: 'admin@realestatetokens.com',
-          role: 'issuer' as const,
-          status: 'active' as const,
-          metadataURI: 'mock-metadata-1',
-          joinedDate: '2024-01-15',
-          lastActive: '2024-12-28',
-          tokensManaged: 5,
-          totalVolume: 15000000
-        },
-        {
-          id: '0x8ba1f109551bD432803012645Hgf72FCb4',
-          address: '0x8ba1f109551bD432803012645Hgf72FCb4',
-          name: 'Invoice Finance Corp',
-          email: 'contact@invoicefinance.com',
-          role: 'issuer' as const,
-          status: 'active' as const,
-          metadataURI: 'mock-metadata-2',
-          joinedDate: '2024-02-20',
-          lastActive: '2024-12-27',
-          tokensManaged: 3,
-          totalVolume: 8500000
-        }
-      ];
+      const fallbackIssuers: User[] = [{
+        id: '0x742D35Cc6635Cf532793FAa14d4A6ce8D8c5D93e',
+        address: '0x742D35Cc6635Cf532793FAa14d4A6ce8D8c5D93e',
+        name: 'Mock Issuer',
+        email: 'issuer@example.com',
+        role: 'issuer' as const,
+        status: 'active' as const,
+        metadataURI: '',
+        joinedDate: '2024-01-01',
+        lastActive: '2024-12-28',
+        tokensManaged: 0,
+        totalVolume: 0
+      }];
 
-      // Mock manager users
-      const managerUsers: User[] = [
-        {
-          id: '0x3456789012345678901234567890123456789012',
-          address: '0x3456789012345678901234567890123456789012',
-          name: 'Asset Manager Pro',
-          email: 'manager@assetmanagerpro.com',
-          role: 'manager' as const,
-          status: 'active' as const,
-          metadataURI: 'mock-metadata-3',
-          joinedDate: '2024-01-10',
-          lastActive: '2024-12-28',
-          tokensManaged: 8,
-          totalVolume: 12000000,
-          assignedTokens: ['1001', '1002', '1003']
-        },
-        {
-          id: '0x9876543210987654321098765432109876543210',
-          address: '0x9876543210987654321098765432109876543210',
-          name: 'Portfolio Solutions',
-          email: 'team@portfoliosolutions.com',
-          role: 'manager' as const,
-          status: 'active' as const,
-          metadataURI: 'mock-metadata-4',
-          joinedDate: '2024-03-05',
-          lastActive: '2024-12-26',
-          tokensManaged: 12,
-          totalVolume: 28000000,
-          assignedTokens: ['1004', '1005', '1006']
-        }
-      ];
+      const fallbackManagers: User[] = [{
+        id: '0x3456789012345678901234567890123456789012',
+        address: '0x3456789012345678901234567890123456789012',
+        name: 'Mock Manager',
+        email: 'manager@example.com',
+        role: 'manager' as const,
+        status: 'active' as const,
+        metadataURI: '',
+        joinedDate: '2024-01-01',
+        lastActive: '2024-12-28',
+        tokensManaged: 0,
+        totalVolume: 0,
+        assignedTokens: []
+      }];
       
-      setIssuers(issuerUsers);
-      setManagers(managerUsers);
+      setIssuers(fallbackIssuers);
+      setManagers(fallbackManagers);
       
-      // Update system metrics
       setSystemMetrics({
-        totalIssuers: issuerUsers.length,
-        totalManagers: managerUsers.length,
-        activeTokens: 15,
-        totalVolume: 63500000,
+        totalIssuers: 1,
+        totalManagers: 1,
+        activeTokens: 0,
+        totalVolume: 0,
         marketplaceStatus: true,
-        platformFees: 125000
+        platformFees: 0
       });
-      
-      console.log('✅ Mock admin data loaded successfully');
-      
-    } catch (error) {
-      console.error('❌ Failed to load admin data:', error);
     } finally {
-      setIsLoadingContractData(false);
+      setIsLoading(false);
     }
   };
 
@@ -282,8 +553,14 @@ const Admin: React.FC = () => {
   };
 
   const handleAddUser = async () => {
-    console.log('🔄 Mock adding user:', userForm);
+    if (!adminContract) {
+      toast.error('Admin contract not initialized');
+      return;
+    }
 
+    console.log('🔄 Creating new issuer account:', userForm);
+
+    // Validation
     if (!userForm.firstName || !userForm.lastName || !userForm.email || !userForm.password || !userForm.walletAddress) {
       toast.error('Please fill all required fields');
       return;
@@ -299,17 +576,21 @@ const Admin: React.FC = () => {
       return;
     }
 
-    // Validate wallet address format
-    const walletRegex = /^0x[a-fA-F0-9]{40}$/;
-    if (!walletRegex.test(userForm.walletAddress)) {
-      toast.error('Invalid wallet address format');
+    // Validate wallet address format and checksum
+    try {
+      const checksumAddress = ethers.utils.getAddress(userForm.walletAddress);
+      console.log('✅ Valid wallet address:', checksumAddress);
+    } catch (error) {
+      toast.error('Invalid wallet address format or checksum');
       return;
     }
 
     setIsLoading(true);
     
     try {
-      // Simulate backend registration
+      console.log('🔄 Step 1: Registering user in backend...');
+      
+      // Step 1: Register user in backend
       const userData = {
         firstName: userForm.firstName,
         lastName: userForm.lastName,
@@ -317,39 +598,180 @@ const Admin: React.FC = () => {
         password: userForm.password,
         confirmPassword: userForm.confirmPassword,
         walletAddress: userForm.walletAddress,
-        role: userForm.role,
+        role: userForm.role as 'issuer' | 'manager', // Set primary role with proper type
       };
 
       try {
         await authApi.register(userData);
-        console.log('User registered in backend successfully');
+        console.log('✅ User registered in backend successfully');
+        toast.success('User registered in backend');
       } catch (backendError) {
-        console.error('Backend registration failed:', backendError);
+        console.error('❌ Backend registration failed:', backendError);
         toast.error('Failed to register user in backend');
+        setIsLoading(false);
         return;
       }
-      
-      // Simulate adding to mock data
-      const newUser: User = {
-        id: userForm.walletAddress,
-        address: userForm.walletAddress,
-        name: `${userForm.firstName} ${userForm.lastName}`,
-        email: userForm.email,
-        role: userForm.role,
-        status: 'active',
-        metadataURI: 'mock-metadata-new',
-        joinedDate: new Date().toISOString().split('T')[0],
-        lastActive: new Date().toISOString().split('T')[0],
-        tokensManaged: 0,
-        totalVolume: 0
-      };
 
       if (userForm.role === 'issuer') {
-        setIssuers(prev => [...prev, newUser]);
+        console.log('🔄 Step 2: Uploading issuer metadata to IPFS...');
+        
+        // Step 2: Upload metadata to IPFS (for issuers)
+        const metadata = {
+          name: `${userForm.firstName} ${userForm.lastName}`,
+          email: userForm.email,
+          walletAddress: userForm.walletAddress,
+          role: 'issuer',
+          joinedDate: new Date().toISOString().split('T')[0],
+          createdBy: 'admin',
+          type: 'issuer-profile'
+        };
+
+        let metadataHash;
+        try {
+          metadataHash = await uploadJSONToPinata(metadata);
+          console.log('✅ Metadata uploaded to IPFS:', metadataHash);
+          toast.success('Metadata uploaded to IPFS');
+        } catch (ipfsError) {
+          console.error('❌ IPFS upload failed:', ipfsError);
+          toast.error('Failed to upload metadata to IPFS');
+          setIsLoading(false);
+          return;
+        }
+
+        console.log('🔄 Step 3: Adding issuer to smart contract...');
+        
+        // Step 3: Add issuer to smart contract
+        try {
+          const metadataURI = `ipfs://${metadataHash}`;
+          const checksumAddress = ethers.utils.getAddress(userForm.walletAddress);
+          
+          console.log('📞 Calling addIssuer function...');
+          console.log('Address:', checksumAddress);
+          console.log('Metadata URI:', metadataURI);
+          
+          const tx = await adminContract.addIssuer(checksumAddress, metadataURI);
+          console.log('⏳ Transaction sent:', tx.hash);
+          toast.success(`Transaction sent: ${tx.hash.slice(0, 10)}...`);
+          
+          console.log('⏳ Waiting for transaction confirmation...');
+          const receipt = await tx.wait();
+          console.log('✅ Transaction confirmed:', receipt.transactionHash);
+          toast.success('Issuer added to blockchain successfully!');
+          
+          // Update local state
+          const newUser: User = {
+            id: checksumAddress,
+            address: checksumAddress,
+            name: `${userForm.firstName} ${userForm.lastName}`,
+            email: userForm.email,
+            role: 'issuer',
+            status: 'active',
+            metadataURI: metadataURI,
+            joinedDate: new Date().toISOString().split('T')[0],
+            lastActive: new Date().toISOString().split('T')[0],
+            tokensManaged: 0,
+            totalVolume: 0
+          };
+
+          setIssuers(prev => [...prev, newUser]);
+          
+          // Update system metrics
+          setSystemMetrics(prev => ({ 
+            ...prev, 
+            totalIssuers: prev.totalIssuers + 1 
+          }));
+          
+        } catch (contractError) {
+          console.error('❌ Smart contract call failed:', contractError);
+          toast.error('Failed to add issuer to smart contract');
+          setIsLoading(false);
+          return;
+        }
+      } else if (userForm.role === 'manager') {
+        console.log('🔄 Step 2: Uploading manager metadata to IPFS...');
+        
+        // Step 2: Upload metadata to IPFS (for managers)
+        const metadata = {
+          name: `${userForm.firstName} ${userForm.lastName}`,
+          email: userForm.email,
+          walletAddress: userForm.walletAddress,
+          role: 'manager',
+          joinedDate: new Date().toISOString().split('T')[0],
+          createdBy: 'admin',
+          type: 'manager-profile',
+          tokensManaged: 0,
+          totalVolume: 0,
+          assignedTokens: []
+        };
+
+        let metadataHash;
+        try {
+          metadataHash = await uploadJSONToPinata(metadata);
+          console.log('✅ Manager metadata uploaded to IPFS:', metadataHash);
+          toast.success('Manager metadata uploaded to IPFS');
+        } catch (ipfsError) {
+          console.error('❌ IPFS upload failed:', ipfsError);
+          toast.error('Failed to upload manager metadata to IPFS');
+          setIsLoading(false);
+          return;
+        }
+
+        console.log('🔄 Step 3: Adding manager to smart contract...');
+        
+        // Step 3: Add manager to smart contract
+        try {
+          const metadataURI = `ipfs://${metadataHash}`;
+          const checksumAddress = ethers.utils.getAddress(userForm.walletAddress);
+          
+          console.log('📞 Calling addManager function...');
+          console.log('Address:', checksumAddress);
+          console.log('Metadata URI:', metadataURI);
+          
+          const tx = await adminContract.addManager(checksumAddress, metadataURI);
+          console.log('⏳ Transaction sent:', tx.hash);
+          toast.success(`Transaction sent: ${tx.hash.slice(0, 10)}...`);
+          
+          console.log('⏳ Waiting for transaction confirmation...');
+          const receipt = await tx.wait();
+          console.log('✅ Transaction confirmed:', receipt.transactionHash);
+          toast.success('Manager added to blockchain successfully!');
+          
+          // Update local state
+          const newUser: User = {
+            id: checksumAddress,
+            address: checksumAddress,
+            name: `${userForm.firstName} ${userForm.lastName}`,
+            email: userForm.email,
+            role: 'manager',
+            status: 'active',
+            metadataURI: metadataURI,
+            joinedDate: new Date().toISOString().split('T')[0],
+            lastActive: new Date().toISOString().split('T')[0],
+            tokensManaged: 0,
+            totalVolume: 0,
+            assignedTokens: []
+          };
+
+          setManagers(prev => [...prev, newUser]);
+          
+          // Update system metrics
+          setSystemMetrics(prev => ({ 
+            ...prev, 
+            totalManagers: prev.totalManagers + 1 
+          }));
+          
+        } catch (contractError) {
+          console.error('❌ Smart contract call failed:', contractError);
+          toast.error('Failed to add manager to smart contract');
+          setIsLoading(false);
+          return;
+        }
       } else {
-        setManagers(prev => [...prev, newUser]);
+        // For other roles, we'll implement this later - just add to backend for now
+        toast.success(`${userForm.role} account created in backend`);
       }
       
+      // Reset form and close dialog
       setShowAddUserDialog(false);
       setUserForm({
         firstName: '',
@@ -362,11 +784,11 @@ const Admin: React.FC = () => {
         metadataURI: ''
       });
       
-      toast.success(`${userForm.role.charAt(0).toUpperCase() + userForm.role.slice(1)} added successfully!`);
+      console.log('✅ User creation process completed successfully');
       
     } catch (error: any) {
-      console.error('Error adding user:', error);
-      toast.error(`Failed to add user: ${error.message}`);
+      console.error('❌ Error in user creation process:', error);
+      toast.error(`Failed to create user: ${error.message}`);
     } finally {
       setIsLoading(false);
     }
@@ -404,27 +826,52 @@ const Admin: React.FC = () => {
   };
 
   const handleToggleMarketplace = async () => {
+    if (!adminContract) {
+      toast.error('Admin contract not initialized');
+      return;
+    }
+
     setIsLoading(true);
     
     try {
-      console.log('🔄 Mock toggling marketplace status...');
+      console.log('🔄 Toggling marketplace status on blockchain...');
+      console.log('Current marketplace paused status:', marketplacePaused);
       
-      // Simulate delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Call the smart contract function
+      const tx = await adminContract.pauseMarketplace();
+      console.log('⏳ Transaction sent:', tx.hash);
+      toast.success(`Transaction sent: ${tx.hash.slice(0, 10)}...`);
       
-      // Toggle marketplace status
-      const newStatus = !marketplacePaused;
-      setMarketplacePaused(newStatus);
-      setSystemMetrics(prev => ({ ...prev, marketplaceStatus: !newStatus }));
+      console.log('⏳ Waiting for transaction confirmation...');
+      const receipt = await tx.wait();
+      console.log('✅ Transaction confirmed:', receipt.transactionHash);
       
-      toast.success(newStatus ? 'Marketplace paused successfully' : 'Marketplace resumed successfully');
+      // Get the new marketplace status from the contract
+      const newMarketplacePaused = await adminContract.marketplacePaused();
+      console.log('📊 New marketplace status from contract:', newMarketplacePaused);
+      
+      // Update local state
+      setMarketplacePaused(newMarketplacePaused);
+      setSystemMetrics(prev => ({ ...prev, marketplaceStatus: !newMarketplacePaused }));
+      
+      const statusText = newMarketplacePaused ? 'paused' : 'resumed';
+      toast.success(`Marketplace ${statusText} successfully on blockchain!`);
+      console.log(`✅ Marketplace ${statusText} successfully`);
       
       // Close the confirmation dialog
       setShowMarketplaceToggleDialog(false);
       
     } catch (error: any) {
-      console.error('Error toggling marketplace:', error);
-      toast.error(`Failed to toggle marketplace: ${error.message}`);
+      console.error('❌ Error toggling marketplace on blockchain:', error);
+      
+      // Check if it's a user rejection
+      if (error.code === 4001) {
+        toast.error('Transaction rejected by user');
+      } else if (error.code === 'UNPREDICTABLE_GAS_LIMIT') {
+        toast.error('Gas estimation failed - check contract state');
+      } else {
+        toast.error(`Failed to toggle marketplace: ${error.message}`);
+      }
     } finally {
       setIsLoading(false);
     }
