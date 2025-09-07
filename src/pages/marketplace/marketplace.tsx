@@ -11,7 +11,7 @@ import { toast } from 'react-hot-toast';
 import { ethers } from 'ethers';
 import { BackgroundBeamsWithCollision } from '@/components/ui/background-beams-with-collision';
 import BuyModal from '@/components/BuyModal';
-import { fetchTokenPrice, formatPriceInUSD, convertTokenToUSD } from '@/utils/priceService';
+import { fetchETHPrice, formatPriceInUSD, convertETHToUSD, formatETHWithUSD } from '@/utils/priceService';
 import { useWallet } from '@/context/WalletContext';
 import { MARKETPLACE_CONTRACT, TOKEN_CONTRACT, NETWORK_CONFIG, ACTIVE_NETWORK } from '@/lib/contractAddress';
 import { MARKETPLACE_ABI } from '@/utils/marketplaceABI';
@@ -106,7 +106,7 @@ const Marketplace: React.FC = () => {
   const [error, setError] = useState<string>('');
   const [selectedListing, setSelectedListing] = useState<MarketplaceListing | null>(null);
   const [showDetails, setShowDetails] = useState<MarketplaceListing | null>(null);
-  const [tokenPrice, setTokenPrice] = useState<number>(1.25); // Default token price
+  const [ethPrice, setEthPrice] = useState<number>(2500); // Default ETH price
   const [priceLoading, setPriceLoading] = useState(true);
   
   // Wallet and contract integration
@@ -117,7 +117,7 @@ const Marketplace: React.FC = () => {
 
   useEffect(() => {
     initializeContract();
-    loadTokenPrice();
+    loadETHPrice();
   }, [provider, signer]);
 
   useEffect(() => {
@@ -224,15 +224,15 @@ const Marketplace: React.FC = () => {
     }
   };
 
-  const loadTokenPrice = async () => {
+  const loadETHPrice = async () => {
     setPriceLoading(true);
     try {
-      const price = await fetchTokenPrice();
-      setTokenPrice(price);
-      console.log(`Token price loaded: $${price}`);
+      const price = await fetchETHPrice();
+      setEthPrice(price);
+      console.log(`ETH price loaded: $${price}`);
     } catch (error) {
-      console.error('Failed to fetch token price:', error);
-      toast.error('Failed to fetch token price, using fallback');
+      console.error('Failed to fetch ETH price:', error);
+      toast.error('Failed to fetch ETH price, using fallback');
     } finally {
       setPriceLoading(false);
     }
@@ -901,7 +901,7 @@ const Marketplace: React.FC = () => {
           listings={listings.slice(0, 3)} 
           onSelectListing={setSelectedListing}
           onViewDetails={setShowDetails}
-          tokenPrice={tokenPrice}
+          tokenPrice={ethPrice}
         />
         
         {/* See All Listings Section */}
@@ -953,7 +953,7 @@ const Marketplace: React.FC = () => {
               listings={realEstateListings} 
               category="Real Estate" 
               onSelectListing={setSelectedListing}
-              tokenPrice={tokenPrice}
+              tokenPrice={ethPrice}
               loading={loading}
             />
           </TabsContent>
@@ -962,7 +962,7 @@ const Marketplace: React.FC = () => {
               listings={invoiceListings} 
               category="Invoices"
               onSelectListing={setSelectedListing}
-              tokenPrice={tokenPrice}
+              tokenPrice={ethPrice}
               loading={loading}
             />
           </TabsContent>
@@ -971,7 +971,7 @@ const Marketplace: React.FC = () => {
               listings={commodityListings} 
               category="Commodities"
               onSelectListing={setSelectedListing}
-              tokenPrice={tokenPrice}
+              tokenPrice={ethPrice}
               loading={loading}
             />
           </TabsContent>
@@ -980,7 +980,7 @@ const Marketplace: React.FC = () => {
               listings={stockListings} 
               category="Stocks"
               onSelectListing={setSelectedListing}
-              tokenPrice={tokenPrice}
+              tokenPrice={ethPrice}
               loading={loading}
             />
           </TabsContent>
@@ -989,7 +989,7 @@ const Marketplace: React.FC = () => {
               listings={carbonCreditListings} 
               category="Carbon Credits"
               onSelectListing={setSelectedListing}
-              tokenPrice={tokenPrice}
+              tokenPrice={ethPrice}
               loading={loading}
             />
           </TabsContent>
@@ -1011,7 +1011,7 @@ const Marketplace: React.FC = () => {
           }}
           onClose={() => setSelectedListing(null)}
           onSuccess={handlePurchaseSuccess}
-          tokenPrice={tokenPrice}
+          tokenPrice={ethPrice}
         />
       )}
 
@@ -1024,7 +1024,7 @@ const Marketplace: React.FC = () => {
             setShowDetails(null);
             setSelectedListing(listing);
           }}
-          tokenPrice={tokenPrice}
+          tokenPrice={ethPrice}
         />
       )}
     </div>
