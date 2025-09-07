@@ -3,7 +3,9 @@ import { motion } from 'framer-motion';
 import { ethers } from 'ethers';
 import { useWallet } from '../../context/WalletContext';
 import { ADMIN_ABI } from '../../utils/adminABI';
-import { ADMIN_CONTRACT, TOKEN_CONTRACT } from '../../lib/contractAddress';
+import { MARKETPLACE_ABI } from '../../utils/marketplaceABI';
+import { PAYMENT_SPLITTER_ABI } from '../../utils/paymentSplitterABI';
+import { ADMIN_CONTRACT, TOKEN_CONTRACT, MARKETPLACE_CONTRACT, PAYMENT_SPLITTER_CONTRACT } from '../../lib/contractAddress';
 import { toast } from 'sonner';
 import { 
   Building2, 
@@ -57,7 +59,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
 import { Link } from 'react-router-dom';
-import { toast } from 'react-hot-toast';
 
 // Types for Asset Management
 interface AssignedAsset {
@@ -80,7 +81,7 @@ interface AssignedAsset {
 interface RentalSubmission {
   tokenId: string;
   assetName: string;
-  amount: number;
+  amount: number; // Amount in ETH (supports decimals like 0.002)
   month: string;
   type: 'rental' | 'dividend' | 'interest';
   notes: string;
@@ -113,6 +114,8 @@ const ManagerDashboard: React.FC = () => {
   // Contract state
   const [adminContract, setAdminContract] = useState<ethers.Contract | null>(null);
   const [tokenContract, setTokenContract] = useState<ethers.Contract | null>(null);
+  const [marketplaceContract, setMarketplaceContract] = useState<ethers.Contract | null>(null);
+  const [paymentSplitterContract, setPaymentSplitterContract] = useState<ethers.Contract | null>(null);
   
   // Manager assets state
   const [assignedTokenIds, setAssignedTokenIds] = useState<string[]>([]);
@@ -214,6 +217,24 @@ const ManagerDashboard: React.FC = () => {
         console.log('✅ Token contract initialized successfully');
       } catch (tokenError) {
         console.warn('⚠️ Token contract initialization failed:', tokenError);
+      }
+      
+      // Initialize marketplace contract
+      try {
+        const marketplaceContractInstance = new ethers.Contract(MARKETPLACE_CONTRACT, MARKETPLACE_ABI, signer);
+        setMarketplaceContract(marketplaceContractInstance);
+        console.log('✅ Marketplace contract initialized successfully');
+      } catch (marketplaceError) {
+        console.warn('⚠️ Marketplace contract initialization failed:', marketplaceError);
+      }
+      
+      // Initialize payment splitter contract
+      try {
+        const paymentSplitterContractInstance = new ethers.Contract(PAYMENT_SPLITTER_CONTRACT, PAYMENT_SPLITTER_ABI, signer);
+        setPaymentSplitterContract(paymentSplitterContractInstance);
+        console.log('✅ Payment splitter contract initialized successfully');
+      } catch (paymentError) {
+        console.warn('⚠️ Payment splitter contract initialization failed:', paymentError);
       }
       
       // Check manager authorization and fetch assigned assets
@@ -337,14 +358,34 @@ const ManagerDashboard: React.FC = () => {
             }
           }
           
+          // Fetch marketplace data for this token
+          let totalTokens = 1000; // Default fallback
+          let soldTokens = 0; // Default fallback
+          
+          if (marketplaceContract) {
+            try {
+              // Get total tokens listed for this token ID
+              const totalListed = await marketplaceContract.totalTokensListed(tokenId);
+              totalTokens = parseInt(totalListed.toString());
+              
+              // For soldTokens, we need to calculate how many have been sold
+              // This would be totalTokens - availableTokens, but we'll use totalListed as available for now
+              soldTokens = totalTokens; // All listed tokens are considered "sold" to the marketplace
+              
+              console.log(`📊 Token ${tokenId} marketplace data: ${soldTokens}/${totalTokens} listed`);
+            } catch (marketplaceError) {
+              console.warn(`⚠️ Could not fetch marketplace data for token ${tokenId}:`, marketplaceError);
+            }
+          }
+          
           // Create asset object with available data
           const asset: AssignedAsset = {
             tokenId: tokenId,
             name: metadata?.name || `Asset #${tokenId}`,
             type: getAssetTypeFromMetadata(metadata) as any,
             location: getLocationFromMetadata(metadata),
-            totalTokens: 1000, // This would come from contract
-            soldTokens: 750, // This would come from marketplace contract
+            totalTokens: totalTokens,
+            soldTokens: soldTokens,
             currentValue: parseFloat(ethers.utils.formatEther(price)),
             monthlyIncome: 0, // Calculate based on historical data
             occupancyRate: 85, // This would come from manager reports
@@ -383,6 +424,13 @@ const ManagerDashboard: React.FC = () => {
       
       setAssignedAssets(assetsWithMetadata);
       console.log(`✅ Loaded ${assetsWithMetadata.length} assigned assets`);
+      
+      // Update metrics
+      setTotalManaged(assetsWithMetadata.length);
+      
+      // Calculate total income from assigned assets
+      const totalIncomeAmount = assetsWithMetadata.reduce((sum, asset) => sum + asset.monthlyIncome, 0);
+      setTotalIncome(totalIncomeAmount);
       
     } catch (error: any) {
       console.error('❌ Error fetching assigned assets:', error);
@@ -437,15 +485,6 @@ const ManagerDashboard: React.FC = () => {
       toast.error(`Failed to connect wallet: ${error.message || 'Unknown error'}`);
     }
   };
-      await checkManagerAuthorization(demoAddress);
-      
-    } catch (error: any) {
-      console.error('Wallet connection failed:', error);
-      toast.error(`Failed to connect wallet: ${error.message || 'Unknown error'}`);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   // Legacy functions for backwards compatibility
   const checkWalletConnection = async () => {
@@ -465,33 +504,8 @@ const ManagerDashboard: React.FC = () => {
       await fetchAssignedAssets();
     }
   };
-        location: `Location ${index + 1}`,
-        totalTokens: 1000,
-        soldTokens: Math.floor(Math.random() * 800) + 200,
-        currentValue: Math.floor(Math.random() * 2000000) + 500000,
-        monthlyIncome: Math.floor(Math.random() * 15000) + 5000,
-        occupancyRate: Math.floor(Math.random() * 20) + 80,
-        lastInspection: "2024-11-15",
-        nextPayment: "2025-01-01",
-        status: 'active' as const,
-        metadataURI: `ipfs://QmExample${tokenId}`,
-        images: ["/api/placeholder/400/300"]
-      }));
-      
-      setAssignedAssets(managedAssets);
-      setTotalManaged(managedAssets.length);
-      setTotalIncome(managedAssets.reduce((sum, asset) => sum + asset.monthlyIncome, 0));
-      
-      
-    } catch (error: any) {
-      console.error('❌ Failed to fetch manager assets:', error);
-      toast.error('Failed to load assigned assets');
-      loadDemoData();
-    } finally {
-      setLoading(false);
-    }
-  };
 
+  // Load demo data function (for fallback)
   const loadDemoData = () => {
     const demoAssets: AssignedAsset[] = [
       {
@@ -583,22 +597,46 @@ const ManagerDashboard: React.FC = () => {
       return;
     }
 
+    if (!paymentSplitterContract || !signer) {
+      toast.error('Payment splitter contract not initialized or wallet not connected');
+      return;
+    }
+
     setIsLoading(true);
     
     try {
-      // Demo submission - in production, this would call the PaymentSplitter contract
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      console.log('🔄 Submitting rental income to payment splitter...');
+      console.log('Token ID:', rentalForm.tokenId);
+      console.log('Amount (ETH):', rentalForm.amount);
       
+      // Convert ETH amount to wei for the contract call
+      const amountInWei = ethers.utils.parseEther(rentalForm.amount.toString());
+      console.log('Amount in Wei:', amountInWei.toString());
+      
+      // Call submitRental on PaymentSplitter contract with the ETH amount
+      const tx = await paymentSplitterContract.submitRental(rentalForm.tokenId, {
+        value: amountInWei,
+        gasLimit: 500000 // Set a reasonable gas limit
+      });
+      
+      console.log('📤 Transaction sent:', tx.hash);
+      toast.info('Transaction submitted. Waiting for confirmation...');
+      
+      // Wait for transaction confirmation
+      const receipt = await tx.wait();
+      console.log('✅ Transaction confirmed:', receipt.transactionHash);
+      
+      // Create income history record
       const newIncome: IncomeHistory = {
         id: `inc_${Date.now()}`,
         tokenId: rentalForm.tokenId,
         assetName: rentalForm.assetName,
         amount: rentalForm.amount,
-        perToken: rentalForm.amount / 1000, // Demo calculation
+        perToken: 0, // Will be calculated by the contract
         submittedDate: new Date().toISOString().split('T')[0],
-        distributedDate: '',
+        distributedDate: new Date().toISOString().split('T')[0], // Distributed immediately
         type: rentalForm.type,
-        status: 'pending'
+        status: 'distributed'
       };
       
       setIncomeHistory(prev => [newIncome, ...prev]);
@@ -613,10 +651,21 @@ const ManagerDashboard: React.FC = () => {
         receipts: []
       });
       
-      toast.success('Rental income submitted successfully!');
+      toast.success(`Rental income of ${rentalForm.amount} ETH distributed successfully!`);
       
-    } catch (error) {
-      toast.error('Failed to submit rental income');
+    } catch (error: any) {
+      console.error('❌ Error submitting rental income:', error);
+      
+      let errorMessage = 'Failed to submit rental income';
+      if (error.code === 4001) {
+        errorMessage = 'Transaction cancelled by user';
+      } else if (error.reason) {
+        errorMessage = `Transaction failed: ${error.reason}`;
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
+      toast.error(errorMessage);
     } finally {
       setIsLoading(false);
     }
@@ -660,7 +709,7 @@ const ManagerDashboard: React.FC = () => {
             
             <div className="flex items-center space-x-4">
               {/* Wallet Connection */}
-              {!walletConnected ? (
+              {!isConnected ? (
                 <Button 
                   onClick={connectWallet}
                   disabled={loading}
@@ -674,7 +723,7 @@ const ManagerDashboard: React.FC = () => {
                   <div className="flex items-center space-x-2 bg-green-500/10 px-3 py-2 rounded-lg border border-green-500/20">
                     <div className="w-2 h-2 bg-green-400 rounded-full"></div>
                     <span className="text-green-400 text-sm font-medium">
-                      {walletAddress.slice(0, 6)}...{walletAddress.slice(-4)}
+                      {address ? `${address.slice(0, 6)}...${address.slice(-4)}` : 'Unknown'}
                     </span>
                   </div>
                   
@@ -1027,9 +1076,9 @@ const ManagerDashboard: React.FC = () => {
                           'Connect your wallet to view assigned assets.'
                         }
                       </p>
-                      {walletConnected && (
+                      {isConnected && (
                         <Button 
-                          onClick={() => fetchManagerAssets(walletAddress)}
+                          onClick={() => fetchManagerAssets(address || '')}
                           disabled={loading}
                           variant="outline"
                         >
@@ -1357,11 +1406,13 @@ const ManagerDashboard: React.FC = () => {
             </div>
 
             <div>
-              <Label htmlFor="amount" className={`${isDarkMode ? 'text-gray-200' : 'text-gray-700'}`}>Amount (USD)</Label>
+              <Label htmlFor="amount" className={`${isDarkMode ? 'text-gray-200' : 'text-gray-700'}`}>Amount (ETH)</Label>
               <Input
                 id="amount"
                 type="number"
-                placeholder="Enter amount"
+                step="0.001"
+                min="0"
+                placeholder="Enter amount in ETH (e.g., 0.002)"
                 value={rentalForm.amount || ''}
                 onChange={(e) => setRentalForm(prev => ({ ...prev, amount: Number(e.target.value) }))}
                 className={`${isDarkMode ? 'bg-gray-800 border-gray-600 text-white' : 'bg-white border-gray-300'}`}
