@@ -8,6 +8,12 @@ import { Link } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
 import { Copy, Home, TrendingUp, Building2, Plus, FileText, BarChart3, Shield, Users, Globe, Sun, Moon, Loader2, Wallet, RefreshCw, ExternalLink } from 'lucide-react';
 import { useWallet } from '@/context/WalletContext';
+import { ethers } from 'ethers';
+import { ADMIN_CONTRACT, ISSUER_CONTRACT, MARKETPLACE_CONTRACT, TOKEN_CONTRACT, NETWORK_CONFIG, ACTIVE_NETWORK } from '@/lib/contractAddress';
+import { ADMIN_ABI } from '@/utils/adminABI';
+import { ISSUER_ABI } from '@/utils/issuerABI';
+import { MARKETPLACE_ABI } from '@/utils/marketplaceABI';
+import { uploadJSONToPinata, uploadToPinata } from '@/utils/pinata';
 
 const assetTypes = [
   'Real Estate',
@@ -32,13 +38,13 @@ const Issuer: React.FC = () => {
   const [isAuthorizedIssuer, setIsAuthorizedIssuer] = useState<boolean | null>(null);
   const [authCheckLoading, setAuthCheckLoading] = useState(false);
   
+  // Contract state
+  const [adminContract, setAdminContract] = useState<ethers.Contract | null>(null);
+  const [issuerContract, setIssuerContract] = useState<ethers.Contract | null>(null);
+  const [marketplaceContract, setMarketplaceContract] = useState<ethers.Contract | null>(null);
+  
   // Contract data state
   const [contractIssuers, setContractIssuers] = useState<{
-    addresses: string[], 
-    count: number, 
-    metadata: Record<string, string>
-  }>({ addresses: [], count: 0, metadata: {} });
-  const [contractManagers, setContractManagers] = useState<{
     addresses: string[], 
     count: number, 
     metadata: Record<string, string>
@@ -61,7 +67,7 @@ const Issuer: React.FC = () => {
   const [nftDescription, setNftDescription] = useState('');
   const [nftAssetType, setNftAssetType] = useState(0);
   const [nftPriceToken, setNftPriceToken] = useState('USD');
-  const [nftPricePerToken, setNftPricePerToken] = useState('1.0'); // Price per token in HBAR (used for both reference and marketplace)
+  const [nftPricePerToken, setNftPricePerToken] = useState('1.0'); // Price per token in ETH (used for both reference and marketplace)
   const [nftEarnXP, setNftEarnXP] = useState('32000');
   const [nftImageFiles, setNftImageFiles] = useState<File[]>([]);
   const [nftId, setNftId] = useState('');
@@ -106,82 +112,204 @@ const Issuer: React.FC = () => {
 
   // Check issuer authorization on wallet connection
   useEffect(() => {
-    const checkAuthorization = async () => {
-      if (!isConnected || !address) {
+    const initializeContractAndCheckAuth = async () => {
+      if (!isConnected || !address || !signer) {
         setIsAuthorizedIssuer(null);
-        console.log('⏳ Authorization check skipped:', { isConnected, address: !!address });
+        setAdminContract(null);
+        console.log('⏳ Authorization check skipped:', { isConnected, address: !!address, signer: !!signer });
         return;
       }
 
       setAuthCheckLoading(true);
-      console.log('🔍 Starting authorization check for:', address);
+      console.log('🔍 Starting contract initialization and authorization check for:', address);
       
       try {
-        // Fetch latest issuer data and check authorization
-        await fetchContractData();
+        // Initialize admin contract
+        await initializeAdminContract();
         
       } catch (error) {
-        console.error('❌ Error checking authorization:', error);
+        console.error('❌ Error during initialization and authorization check:', error);
         setIsAuthorizedIssuer(false);
       } finally {
         setAuthCheckLoading(false);
       }
     };
 
-    checkAuthorization();
-  }, [isConnected, address]);
+    initializeContractAndCheckAuth();
+  }, [isConnected, address, signer]);
 
-  // Function to fetch all contract data
-  const fetchContractData = async () => {
+  // Initialize admin contract
+  const initializeAdminContract = async () => {
+    try {
+      if (!isConnected || !signer) {
+        console.log('❌ Wallet not connected');
+        return;
+      }
+
+      console.log('🔄 Initializing admin contract...');
+      console.log('Contract address:', ADMIN_CONTRACT);
+      console.log('Network:', ACTIVE_NETWORK);
+      
+      // Check network
+      const network = await signer.provider.getNetwork();
+      console.log('Connected to network:', network.name, 'Chain ID:', network.chainId);
+      console.log('Expected Chain ID:', NETWORK_CONFIG[ACTIVE_NETWORK].chainId);
+      
+      if (network.chainId !== NETWORK_CONFIG[ACTIVE_NETWORK].chainId) {
+        console.error('❌ Wrong network! Expected Chain ID:', NETWORK_CONFIG[ACTIVE_NETWORK].chainId, 'Got:', network.chainId);
+        toast.error(`Please switch to ${NETWORK_CONFIG[ACTIVE_NETWORK].name} (Chain ID: ${NETWORK_CONFIG[ACTIVE_NETWORK].chainId})`);
+        return;
+      }
+      
+      // Create contract instance
+      const contract = new ethers.Contract(ADMIN_CONTRACT, ADMIN_ABI, signer);
+      
+      // Verify contract exists
+      try {
+        const code = await signer.provider.getCode(ADMIN_CONTRACT);
+        if (code === '0x') {
+          console.error('❌ No contract found at address:', ADMIN_CONTRACT);
+          toast.error('Admin contract not found at the specified address');
+          return;
+        }
+        console.log('✅ Contract verified at address:', ADMIN_CONTRACT);
+      } catch (error) {
+        console.error('❌ Error verifying contract:', error);
+        toast.error('Failed to verify admin contract');
+        return;
+      }
+      
+      setAdminContract(contract);
+      console.log('✅ Admin contract initialized successfully');
+      
+      // Initialize issuer and marketplace contracts
+      await initializeIssuerAndMarketplaceContracts();
+      
+      // Now fetch contract data and check authorization
+      await fetchContractDataAndCheckAuth(contract);
+      
+    } catch (error) {
+      console.error('❌ Error initializing admin contract:', error);
+      toast.error('Failed to initialize admin contract');
+    }
+  };
+
+  // Initialize issuer and marketplace contracts
+  const initializeIssuerAndMarketplaceContracts = async () => {
+    try {
+      if (!signer) {
+        console.log('❌ Signer not available');
+        return;
+      }
+
+      console.log('🔄 Initializing issuer and marketplace contracts...');
+      
+      // Initialize issuer contract
+      const issuerContractInstance = new ethers.Contract(ISSUER_CONTRACT, ISSUER_ABI, signer);
+      const issuerCode = await signer.provider.getCode(ISSUER_CONTRACT);
+      if (issuerCode === '0x') {
+        console.error('❌ No issuer contract found at address:', ISSUER_CONTRACT);
+        toast.error('Issuer contract not found');
+        return;
+      }
+      setIssuerContract(issuerContractInstance);
+      console.log('✅ Issuer contract initialized:', ISSUER_CONTRACT);
+
+      // Initialize marketplace contract
+      const marketplaceContractInstance = new ethers.Contract(MARKETPLACE_CONTRACT, MARKETPLACE_ABI, signer);
+      const marketplaceCode = await signer.provider.getCode(MARKETPLACE_CONTRACT);
+      if (marketplaceCode === '0x') {
+        console.error('❌ No marketplace contract found at address:', MARKETPLACE_CONTRACT);
+        toast.error('Marketplace contract not found');
+        return;
+      }
+      setMarketplaceContract(marketplaceContractInstance);
+      console.log('✅ Marketplace contract initialized:', MARKETPLACE_CONTRACT);
+
+      console.log('✅ All contracts initialized successfully');
+      
+    } catch (error) {
+      console.error('❌ Error initializing contracts:', error);
+      toast.error('Failed to initialize contracts');
+    }
+  };
+
+  // Function to fetch contract data and check authorization
+  const fetchContractDataAndCheckAuth = async (contract?: ethers.Contract) => {
+    const contractToUse = contract || adminContract;
+    
+    if (!contractToUse) {
+      console.log('❌ Admin contract not initialized');
+      return;
+    }
+
     setIsLoadingContractData(true);
     
     try {
-      console.log('🔄 Loading mock issuer data...');
+      console.log('🔄 Loading issuer data from blockchain...');
+      console.log('Contract address:', contractToUse.address);
+      console.log('Signer address:', await contractToUse.signer.getAddress());
       
-      // Mock contract data
-      const mockIssuersData = {
-        addresses: ['0x742D35Cc6635Cf532793FAa14d4A6ce8D8c5D93e', '0x8ba1f109551bD432803012645Hgf72FCb4'], 
-        count: 2, 
-        metadata: {
-          '0x742D35Cc6635Cf532793FAa14d4A6ce8D8c5D93e': 'mock-metadata-1',
-          '0x8ba1f109551bD432803012645Hgf72FCb4': 'mock-metadata-2'
-        }
-      };
-      
-      const mockManagersData = {
-        addresses: ['0x3456789012345678901234567890123456789012', '0x9876543210987654321098765432109876543210'], 
-        count: 2, 
-        metadata: {
-          '0x3456789012345678901234567890123456789012': 'mock-metadata-3',
-          '0x9876543210987654321098765432109876543210': 'mock-metadata-4'
-        }
-      };
-      
-      setContractIssuers(mockIssuersData);
-      setContractManagers(mockManagersData);
+      // Call getAllIssuers from admin contract
+      let issuersData;
+      try {
+        console.log('📞 Calling getAllIssuers...');
+        issuersData = await contractToUse.getAllIssuers();
+        console.log('✅ getAllIssuers result:', issuersData);
+      } catch (error) {
+        console.error('❌ getAllIssuers failed:', error);
+        issuersData = [];
+      }
 
-      // Check if connected wallet is authorized issuer (mock check)
-      if (address && mockIssuersData.addresses.length > 0) {
-        const isAuthorized = mockIssuersData.addresses.some(
-          issuerAddress => issuerAddress.toLowerCase() === address.toLowerCase()
+      // Process issuers data
+      const issuerAddresses = issuersData || [];
+      const contractIssuersData = {
+        addresses: issuerAddresses,
+        count: issuerAddresses.length,
+        metadata: {}
+      };
+      
+      setContractIssuers(contractIssuersData);
+
+      // Check if connected wallet is authorized issuer
+      if (address && issuerAddresses.length >= 0) {
+        const isAuthorized = issuerAddresses.some(
+          (issuerAddress: string) => issuerAddress.toLowerCase() === address.toLowerCase()
         );
         setIsAuthorizedIssuer(isAuthorized);
         
         if (isAuthorized) {
           console.log('✅ Connected wallet is authorized as issuer');
+          toast.success('Welcome, authorized issuer!');
         } else {
           console.log('❌ Connected wallet is not authorized as issuer');
+          console.log('Connected address:', address);
+          console.log('Authorized issuers:', issuerAddresses);
+          toast.error('Your wallet is not authorized as an issuer');
         }
+      } else if (issuerAddresses.length === 0) {
+        console.log('ℹ️ No issuers found in contract');
+        setIsAuthorizedIssuer(false);
+        toast('No authorized issuers found in the system', {
+          icon: 'ℹ️',
+        });
       }
 
       console.log('🎯 Contract data fetched successfully');
+      console.log(`📊 Total Authorized Issuers: ${issuerAddresses.length}`);
       
     } catch (error: any) {
       console.error('❌ Error fetching contract data:', error);
       setIsAuthorizedIssuer(false);
+      toast.error('Failed to check issuer authorization');
     } finally {
       setIsLoadingContractData(false);
     }
+  };
+
+  // Legacy function for compatibility (now calls the new function)
+  const fetchContractData = async () => {
+    await fetchContractDataAndCheckAuth();
   };
 
   const handleNftImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -196,6 +324,22 @@ const Issuer: React.FC = () => {
   };
 
   const handleMintNFT = async () => {
+    // Check authorization first
+    if (isAuthorizedIssuer !== true) {
+      toast.error('You are not authorized to create tokens. Please contact the admin.');
+      return;
+    }
+
+    // Check contracts are initialized
+    if (!issuerContract) {
+      toast.error('Issuer contract not initialized. Please refresh the page.');
+      return;
+    }
+
+    if (!marketplaceContract) {
+      console.warn('⚠️ Marketplace contract not initialized - will skip automatic listing');
+    }
+
     // Validate form
     if (!nftTitle || !nftDescription || !nftAmount || !nftPricePerToken) {
       toast.error('Please fill all required fields');
@@ -211,39 +355,234 @@ const Issuer: React.FC = () => {
     setIsMinting(true);
     
     try {
-      console.log('🔄 Mock creating token:', { nftTitle, tokenType, nftAmount, nftPricePerToken });
+      console.log('� Starting token creation and listing workflow...');
+      console.log('Token details:', { 
+        title: nftTitle, 
+        type: tokenType, 
+        amount: nftAmount, 
+        price: nftPricePerToken,
+        assetType: assetTypes[nftAssetType]
+      });
       
-      // Simulate processing delay
-      toast('Processing token creation...');
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Step 1: Prepare metadata and upload image + metadata to IPFS
+      console.log('🔄 Step 1: Preparing metadata and uploading to IPFS...');
+      
+      const baseMetadata = {
+        name: nftTitle,
+        description: nftDescription,
+        attributes: [
+          {
+            trait_type: "Asset Type",
+            value: assetTypes[nftAssetType]
+          },
+          {
+            trait_type: "Price Token",
+            value: nftPriceToken
+          },
+          {
+            trait_type: "Earn XP",
+            value: nftEarnXP
+          }
+        ],
+        // Add asset-specific metadata
+        assetDetails: getAssetSpecificMetadata(),
+        tokenType: tokenType,
+        createdAt: new Date().toISOString(),
+        createdBy: address
+      };
 
-      // Create mock token result
-      const mockTokenId = `TOKEN_${Date.now()}`;
+      console.log('📋 Base metadata prepared:', baseMetadata);
+      
+      // Upload image and metadata to IPFS
+      toast('Uploading image and metadata to IPFS...');
+      let metadataHash;
+      try {
+        if (nftImageFiles.length > 0) {
+          // Upload the first image file along with metadata
+          console.log('📷 Uploading image:', nftImageFiles[0].name);
+          metadataHash = await uploadToPinata(nftImageFiles[0], baseMetadata);
+          console.log('✅ Image and metadata uploaded to IPFS:', metadataHash);
+          toast.success('Image and metadata uploaded to IPFS successfully!');
+        } else {
+          // If no image, just upload metadata
+          console.log('📋 No image provided, uploading metadata only');
+          metadataHash = await uploadJSONToPinata({...baseMetadata, image: ''});
+          console.log('✅ Metadata uploaded to IPFS:', metadataHash);
+          toast.success('Metadata uploaded to IPFS successfully!');
+        }
+      } catch (ipfsError) {
+        console.error('❌ IPFS upload failed:', ipfsError);
+        toast.error('Failed to upload to IPFS');
+        return;
+      }
+
+      const metadataURI = `ipfs://${metadataHash}`;
+      
+      // Step 2: Create token via issuer contract
+      console.log('🔄 Step 2: Creating token via issuer contract...');
+      console.log('Creating token with:', {
+        amount: nftAmount,
+        price: ethers.utils.parseEther(nftPricePerToken),
+        metadataURI
+      });
+      
+      toast('Creating token on blockchain...');
+      
+      // Call createToken on issuer contract - simple and direct
+      const createTokenTx = await issuerContract.createToken(
+        parseInt(nftAmount),
+        ethers.utils.parseEther(nftPricePerToken),
+        metadataURI
+      );
+      
+      console.log('⏳ Create token transaction sent:', createTokenTx.hash);
+      toast.success(`Transaction sent: ${createTokenTx.hash.slice(0, 10)}...`);
+      
+      // Wait for confirmation
+      const receipt = await createTokenTx.wait();
+      console.log('✅ Transaction confirmed:', receipt.transactionHash);
+      
+      // Get the actual token ID returned by the createToken function
+      let tokenId;
+      try {
+        // The createToken function returns the tokenId, but we need to get it from the transaction
+        // Look for TokenMinted event from ERC1155Core contract
+        const tokenMintedEvent = receipt.events?.find((event: any) => 
+          event.event === 'TokenMinted' && event.address.toLowerCase() === TOKEN_CONTRACT.toLowerCase()
+        );
+        
+        if (tokenMintedEvent && tokenMintedEvent.args && tokenMintedEvent.args.tokenId) {
+          tokenId = tokenMintedEvent.args.tokenId;
+          console.log('🎯 Token ID extracted from TokenMinted event:', tokenId.toString());
+        } else {
+          // Fallback: call getMyTokens to get the latest token created by this issuer
+          console.log('🔄 Fallback: Getting token ID from getMyTokens...');
+          const myTokens = await issuerContract.getMyTokens();
+          tokenId = myTokens[myTokens.length - 1]; // Get the last token created
+          console.log('🎯 Token ID from getMyTokens:', tokenId.toString());
+        }
+      } catch (e) {
+        console.error('❌ Failed to extract token ID:', e);
+        throw new Error('Failed to get token ID from transaction');
+      }
+      
+      if (!tokenId) {
+        throw new Error('Token ID not found in transaction result');
+      }
+      
+      console.log('✅ Confirmed Token ID:', tokenId.toString());
+      toast.success(`Token created successfully! Token ID: ${tokenId.toString()}`);
+
+      // Immediately list the asset on marketplace
+      console.log('🔄 Listing asset on marketplace...');
+      console.log('Listing token:', {
+        tokenId: tokenId.toString(),
+        amount: parseInt(nftAmount)
+      });
+      
+      if (!marketplaceContract) {
+        console.warn('⚠️ Marketplace contract not initialized, skipping listing');
+        toast('Token created but marketplace listing skipped (contract not initialized)');
+      } else {
+        try {
+          toast('Listing asset on marketplace...');
+          
+          const listAssetTx = await marketplaceContract.listAsset(
+            tokenId,
+            parseInt(nftAmount)
+          );
+          
+          console.log('⏳ List asset transaction sent:', listAssetTx.hash);
+          toast.success(`Listing transaction sent: ${listAssetTx.hash.slice(0, 10)}...`);
+          
+          const listAssetReceipt = await listAssetTx.wait();
+          console.log('✅ List asset transaction confirmed:', listAssetReceipt.transactionHash);
+          
+          toast.success('🎉 Asset listed on marketplace successfully!');
+          
+        } catch (listError) {
+          console.error('❌ List asset failed:', listError);
+          toast.error('Token created but failed to list on marketplace');
+          // Note: Token was created successfully, but listing failed
+        }
+      }
+
+      
+      // Update local state and show success
       const newToken = {
-        tokenId: mockTokenId,
+        tokenId: tokenId.toString(),
         name: nftTitle,
         amount: parseInt(nftAmount),
         price: parseFloat(nftPricePerToken),
         createdAt: new Date()
       };
       
-      // Add to created tokens
       setCreatedTokens(prev => [...prev, newToken]);
       localStorage.setItem('userTokens', JSON.stringify([...createdTokens, newToken]));
 
-      // Show success
-      setMintedAssetId(mockTokenId);
+      // Show success dialog
+      setMintedAssetId(tokenId.toString());
       setShowSuccessDialog(true);
       setShowNFTDialog(false);
       resetNFTForm();
       
-      toast.success(`${tokenType} Token created successfully! Token ID: ${mockTokenId}`);
+      console.log('🎉 Token created successfully!');
+      toast.success(`🎉 Token created successfully! Token ID: ${tokenId.toString()}`);
       
     } catch (error: any) {
-      console.error('Token creation error:', error);
-      toast.error(`Failed to create token: ${error.message}`);
+      console.error('❌ Token creation error:', error);
+      
+      if (error.code === 4001) {
+        toast.error('Transaction rejected by user');
+      } else if (error.code === 'INSUFFICIENT_FUNDS') {
+        toast.error('Insufficient funds for transaction');
+      } else if (error.message?.includes('Not authorized issuer')) {
+        toast.error('Your wallet is not authorized as an issuer');
+      } else {
+        toast.error(`Failed to create token: ${error.message}`);
+      }
     } finally {
       setIsMinting(false);
+    }
+  };
+
+  // Helper function to get asset-specific metadata
+  const getAssetSpecificMetadata = () => {
+    const assetType = assetTypes[nftAssetType];
+    
+    switch (assetType) {
+      case 'Real Estate':
+        return {
+          size: realEstateSize,
+          bedrooms: realEstateBedrooms,
+          location: realEstateLocation
+        };
+      case 'Invoice':
+        return {
+          issuer: invoiceIssuer,
+          dueDate: invoiceDueDate,
+          riskRating: invoiceRiskRating
+        };
+      case 'Commodity':
+        return {
+          weight: commodityWeight,
+          purity: commodityPurity,
+          storage: commodityStorage
+        };
+      case 'Stocks':
+        return {
+          symbol: stockSymbol,
+          exchange: stockExchange,
+          sector: stockSector
+        };
+      case 'CarbonCredit':
+        return {
+          standard: carbonStandard,
+          projectType: carbonProjectType,
+          co2Offset: carbonCO2Offset
+        };
+      default:
+        return {};
     }
   };
 
@@ -275,6 +614,76 @@ const Issuer: React.FC = () => {
     setCarbonStandard('');
     setCarbonProjectType('');
     setCarbonCO2Offset('');
+  };
+
+  // Approve marketplace to manage user's tokens
+  const handleApproveMarketplace = async () => {
+    if (!marketplaceContract || !issuerContract) {
+      toast.error('Contracts not initialized. Please refresh the page.');
+      return;
+    }
+
+    if (!address) {
+      toast.error('Please connect your wallet first.');
+      return;
+    }
+
+    try {
+      console.log('🔄 Approving marketplace to manage tokens...');
+      console.log('Marketplace address:', MARKETPLACE_CONTRACT);
+      
+      toast('Requesting approval transaction...');
+      
+      // Call setApprovalForAll on the token contract (ERC1155Core)
+      // We need to get the token contract address from the issuer contract
+      const tokenContractAddress = TOKEN_CONTRACT; // From contractAddress.ts
+      
+      if (!tokenContractAddress) {
+        toast.error('Token contract address not found');
+        return;
+      }
+
+      // Create token contract instance
+      const tokenContract = new ethers.Contract(
+        tokenContractAddress,
+        [
+          "function setApprovalForAll(address operator, bool approved) external",
+          "function isApprovedForAll(address account, address operator) external view returns (bool)"
+        ],
+        signer
+      );
+
+      // Check current approval status
+      const isCurrentlyApproved = await tokenContract.isApprovedForAll(address, MARKETPLACE_CONTRACT);
+      
+      if (isCurrentlyApproved) {
+        toast.success('Marketplace is already approved to manage your tokens!');
+        return;
+      }
+
+      // Send approval transaction
+      const approveTx = await tokenContract.setApprovalForAll(MARKETPLACE_CONTRACT, true);
+      
+      console.log('⏳ Approval transaction sent:', approveTx.hash);
+      toast.success(`Approval transaction sent: ${approveTx.hash.slice(0, 10)}...`);
+      
+      // Wait for confirmation
+      const approvalReceipt = await approveTx.wait();
+      console.log('✅ Approval transaction confirmed:', approvalReceipt.transactionHash);
+      
+      toast.success('🎉 Marketplace approved successfully! You can now list your tokens for sale.');
+      
+    } catch (error: any) {
+      console.error('❌ Marketplace approval error:', error);
+      
+      if (error.code === 4001) {
+        toast.error('Approval transaction rejected by user');
+      } else if (error.code === 'INSUFFICIENT_FUNDS') {
+        toast.error('Insufficient funds for transaction');
+      } else {
+        toast.error(`Failed to approve marketplace: ${error.message}`);
+      }
+    }
   };
 
   const copyToClipboard = async (text: string) => {
@@ -473,7 +882,7 @@ const Issuer: React.FC = () => {
         <div className={`${isDarkMode ? 'bg-gray-900/50 backdrop-blur-xl border-gray-800' : 'bg-white border-gray-200'} rounded-xl border shadow-xl mb-8`}>
           <div className="p-6">
             <h3 className={`text-lg font-semibold ${isDarkMode ? 'text-white' : 'text-gray-900'} mb-4`}>Quick Actions</h3>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
               <Button 
                 variant="outline" 
                 className={`h-20 flex-col space-y-2 ${isDarkMode ? 'border-gray-700 bg-gray-800/50 text-gray-300 hover:bg-gray-800 hover:text-white' : 'border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100 hover:text-gray-900'}`}
@@ -504,9 +913,19 @@ const Issuer: React.FC = () => {
               <Button 
                 variant="outline" 
                 className={`h-20 flex-col space-y-2 ${isDarkMode ? 'border-gray-700 bg-gray-800/50 text-gray-300 hover:bg-gray-800 hover:text-white' : 'border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100 hover:text-gray-900'}`}
-                onClick={() => {/* Handle support */}}
+                onClick={handleApproveMarketplace}
+                disabled={!isConnected || isAuthorizedIssuer !== true}
               >
                 <Shield className="w-5 h-5" />
+                <span className="text-sm font-medium">Approve</span>
+              </Button>
+              
+              <Button 
+                variant="outline" 
+                className={`h-20 flex-col space-y-2 ${isDarkMode ? 'border-gray-700 bg-gray-800/50 text-gray-300 hover:bg-gray-800 hover:text-white' : 'border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100 hover:text-gray-900'}`}
+                onClick={() => {/* Handle support */}}
+              >
+                <Globe className="w-5 h-5" />
                 <span className="text-sm font-medium">Support</span>
               </Button>
             </div>
@@ -555,7 +974,7 @@ const Issuer: React.FC = () => {
                               Supply: {token.amount}
                             </span>
                             <span className={`${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-                              Price: {token.price} HBAR
+                              Price: {token.price} ETH
                             </span>
                           </div>
                         </div>
@@ -673,7 +1092,7 @@ const Issuer: React.FC = () => {
                     </select>
                   </LabelInputContainer>
                   <LabelInputContainer>
-                    <Label htmlFor="nftPricePerToken" className={`${isDarkMode ? 'text-gray-200' : 'text-gray-700'}`}>Price per Token (HBAR)</Label>
+                    <Label htmlFor="nftPricePerToken" className={`${isDarkMode ? 'text-gray-200' : 'text-gray-700'}`}>Price per Token (ETH)</Label>
                     <Input 
                       id="nftPricePerToken" 
                       value={nftPricePerToken} 
@@ -685,7 +1104,7 @@ const Issuer: React.FC = () => {
                       className={`${isDarkMode ? 'border-gray-600 bg-gray-800 text-white placeholder:text-gray-400' : 'border-gray-300 bg-white text-gray-900 placeholder:text-gray-500'}`} 
                     />
                     <p className={`text-xs mt-1 ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-                      Price per token in HBAR (will be used for marketplace listing)
+                      Price per token in ETH (will be used for marketplace listing)
                     </p>
                   </LabelInputContainer>
                   <LabelInputContainer>
@@ -847,7 +1266,7 @@ const Issuer: React.FC = () => {
                       </div>
                       <div className="flex justify-between">
                         <span className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>Price per Token:</span>
-                        <span className={`${isDarkMode ? 'text-white' : 'text-gray-900'} font-medium`}>{nftPricePerToken} HBAR</span>
+                        <span className={`${isDarkMode ? 'text-white' : 'text-gray-900'} font-medium`}>{nftPricePerToken} ETH</span>
                       </div>
                       <div className="flex justify-between">
                         <span className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>Images:</span>
