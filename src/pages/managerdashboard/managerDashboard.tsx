@@ -1,5 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
+import { ethers } from 'ethers';
+import { useWallet } from '../../context/WalletContext';
+import { ADMIN_ABI } from '../../utils/adminABI';
+import { ADMIN_CONTRACT, TOKEN_CONTRACT } from '../../lib/contractAddress';
+import { toast } from 'sonner';
 import { 
   Building2, 
   Coins, 
@@ -98,14 +103,23 @@ const ManagerDashboard: React.FC = () => {
   // Theme state
   const [isDarkMode, setIsDarkMode] = useState(false);
   
-  // Wallet states
-  const [walletConnected, setWalletConnected] = useState(false);
-  const [walletAddress, setWalletAddress] = useState('');
-  const [isAuthorizedManager, setIsAuthorizedManager] = useState(false);
+  // Wallet context
+  const { provider, signer, address, isConnected } = useWallet();
+  
+  // Authorization state
+  const [isAuthorizedManager, setIsAuthorizedManager] = useState<boolean | null>(null);
+  const [authCheckLoading, setAuthCheckLoading] = useState(false);
+  
+  // Contract state
+  const [adminContract, setAdminContract] = useState<ethers.Contract | null>(null);
+  const [tokenContract, setTokenContract] = useState<ethers.Contract | null>(null);
+  
+  // Manager assets state
+  const [assignedTokenIds, setAssignedTokenIds] = useState<string[]>([]);
+  const [assignedAssets, setAssignedAssets] = useState<AssignedAsset[]>([]);
   const [loading, setLoading] = useState(false);
   
   // Main state
-  const [assignedAssets, setAssignedAssets] = useState<AssignedAsset[]>([]);
   const [selectedAsset, setSelectedAsset] = useState<AssignedAsset | null>(null);
   const [activeTab, setActiveTab] = useState('overview');
   
@@ -131,29 +145,298 @@ const ManagerDashboard: React.FC = () => {
   const [totalIncome, setTotalIncome] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Demo data initialization
+  // Check manager authorization on wallet connection
   useEffect(() => {
-    checkWalletConnection();
-  }, []);
-
-  // Connect wallet function
-  const connectWallet = async () => {
-    try {
-      if (!window.ethereum) {
-        toast.error('MetaMask not found! Please install MetaMask.');
+    const initializeContractAndCheckAuth = async () => {
+      if (!isConnected || !address || !signer) {
+        console.log('Wallet not connected, resetting manager state');
+        setIsAuthorizedManager(null);
+        setAssignedAssets([]);
+        setAssignedTokenIds([]);
         return;
       }
 
+      setAuthCheckLoading(true);
+      console.log('🔍 Starting contract initialization and manager authorization check for:', address);
+      
+      try {
+        await initializeAdminContract();
+      } catch (error) {
+        console.error('❌ Error during initialization:', error);
+        toast.error('Failed to initialize contracts');
+      } finally {
+        setAuthCheckLoading(false);
+      }
+    };
+
+    initializeContractAndCheckAuth();
+  }, [isConnected, address, signer]);
+
+  // Initialize admin contract
+  const initializeAdminContract = async () => {
+    try {
+      if (!isConnected || !signer) {
+        console.log('❌ Wallet not connected or signer not available');
+        return;
+      }
+
+      console.log('🔄 Initializing admin contract...');
+      console.log('Contract address:', ADMIN_CONTRACT);
+      
+      // Create contract instance
+      const contract = new ethers.Contract(ADMIN_CONTRACT, ADMIN_ABI, signer);
+      
+      // Verify contract exists
+      try {
+        const code = await signer.provider.getCode(ADMIN_CONTRACT);
+        if (code === '0x') {
+          throw new Error('Contract not deployed at this address');
+        }
+      } catch (error) {
+        console.error('❌ Contract verification failed:', error);
+        throw error;
+      }
+      
+      setAdminContract(contract);
+      console.log('✅ Admin contract initialized successfully');
+      
+      // Initialize token contract for metadata fetching
+      const TOKEN_ABI = [
+        "function uri(uint256 tokenId) external view returns (string memory)",
+        "function tokenMetadata(uint256 tokenId) external view returns (string memory)",
+        "function tokenPrice(uint256 tokenId) external view returns (uint256)",
+        "function tokenIssuer(uint256 tokenId) external view returns (address)"
+      ];
+      
+      try {
+        const tokenContractInstance = new ethers.Contract(TOKEN_CONTRACT, TOKEN_ABI, signer);
+        setTokenContract(tokenContractInstance);
+        console.log('✅ Token contract initialized successfully');
+      } catch (tokenError) {
+        console.warn('⚠️ Token contract initialization failed:', tokenError);
+      }
+      
+      // Check manager authorization and fetch assigned assets
+      await checkManagerAuthAndFetchAssets(contract);
+      
+    } catch (error) {
+      console.error('❌ Error initializing admin contract:', error);
+      toast.error('Failed to initialize admin contract');
+    }
+  };
+
+  // Check if user is authorized manager and fetch assigned assets
+  const checkManagerAuthAndFetchAssets = async (contract?: ethers.Contract) => {
+    const contractToUse = contract || adminContract;
+    
+    if (!contractToUse || !address) {
+      console.log('❌ Admin contract not initialized or address not available');
+      return;
+    }
+    
+    try {
+      console.log('🔄 Checking manager authorization for:', address);
+      
+      // Call getAllManagers from admin contract
+      let managersData;
+      try {
+        managersData = await contractToUse.getAllManagers();
+        console.log('📋 All managers from contract:', managersData);
+      } catch (error) {
+        console.error('❌ Error calling getAllManagers:', error);
+        toast.error('Failed to fetch managers from contract');
+        setIsAuthorizedManager(false);
+        return;
+      }
+
+      // Check if connected wallet is in managers list
+      const managerAddresses = managersData || [];
+      const isManager = managerAddresses.some((managerAddr: string) => 
+        managerAddr.toLowerCase() === address.toLowerCase()
+      );
+      
+      setIsAuthorizedManager(isManager);
+      
+      if (isManager) {
+        console.log('✅ User is authorized manager');
+        toast.success('Manager authorization confirmed!');
+        
+        // Fetch assigned tokens for this manager
+        await fetchAssignedAssets(contractToUse);
+      } else {
+        console.log('❌ User is not an authorized manager');
+        toast.error('You are not authorized as a manager');
+        setAssignedAssets([]);
+        setAssignedTokenIds([]);
+      }
+
+      console.log(`🎯 Manager check completed. Authorized: ${isManager}`);
+      console.log(`📊 Total Managers: ${managerAddresses.length}`);
+      
+    } catch (error: any) {
+      console.error('❌ Error checking manager authorization:', error);
+      setIsAuthorizedManager(false);
+      toast.error('Failed to check manager authorization');
+    }
+  };
+
+  // Fetch assigned assets for the manager
+  const fetchAssignedAssets = async (contract?: ethers.Contract) => {
+    const contractToUse = contract || adminContract;
+    
+    if (!contractToUse || !address) {
+      console.log('❌ Contract not initialized or address not available');
+      return;
+    }
+    
+    try {
       setLoading(true);
+      console.log('🔄 Fetching assigned assets for manager:', address);
       
-      // Mock wallet connection
-      const demoAddress = "0x3456789012345678901234567890123456789012";
+      // Get manager's assigned token IDs
+      const assignedTokenIds = await contractToUse.getManagerTokens(address);
+      console.log('📋 Assigned token IDs:', assignedTokenIds.map((id: ethers.BigNumber) => id.toString()));
       
-      setWalletAddress(demoAddress);
-      setWalletConnected(true);
+      const tokenIdStrings = assignedTokenIds.map((id: ethers.BigNumber) => id.toString());
+      setAssignedTokenIds(tokenIdStrings);
+      
+      if (tokenIdStrings.length === 0) {
+        console.log('ℹ️ No assets assigned to this manager');
+        setAssignedAssets([]);
+        return;
+      }
+      
+      // Fetch metadata for each assigned token
+      const assetsWithMetadata: AssignedAsset[] = [];
+      
+      for (const tokenId of tokenIdStrings) {
+        try {
+          console.log(`🔄 Processing metadata for token ${tokenId}...`);
+          
+          // Get basic token info
+          let metadata: any = {};
+          let price = ethers.BigNumber.from(0);
+          let issuer = '';
+          
+          if (tokenContract) {
+            try {
+              const metadataURI = await tokenContract.tokenMetadata(tokenId);
+              price = await tokenContract.tokenPrice(tokenId);
+              issuer = await tokenContract.tokenIssuer(tokenId);
+              
+              // Parse metadata if it's IPFS URI
+              if (metadataURI.startsWith('ipfs://')) {
+                const ipfsHash = metadataURI.replace('ipfs://', '');
+                const metadataResponse = await fetch(`https://gateway.pinata.cloud/ipfs/${ipfsHash}`);
+                if (metadataResponse.ok) {
+                  metadata = await metadataResponse.json();
+                }
+              }
+            } catch (tokenError) {
+              console.warn(`⚠️ Could not fetch metadata for token ${tokenId}:`, tokenError);
+            }
+          }
+          
+          // Create asset object with available data
+          const asset: AssignedAsset = {
+            tokenId: tokenId,
+            name: metadata?.name || `Asset #${tokenId}`,
+            type: getAssetTypeFromMetadata(metadata) as any,
+            location: getLocationFromMetadata(metadata),
+            totalTokens: 1000, // This would come from contract
+            soldTokens: 750, // This would come from marketplace contract
+            currentValue: parseFloat(ethers.utils.formatEther(price)),
+            monthlyIncome: 0, // Calculate based on historical data
+            occupancyRate: 85, // This would come from manager reports
+            lastInspection: '2024-03-01', // This would come from manager records
+            nextPayment: '2024-04-01', // Calculate based on payment schedule
+            status: 'active' as any,
+            metadataURI: metadata ? `ipfs://token${tokenId}` : '',
+            images: metadata?.images || []
+          };
+          
+          assetsWithMetadata.push(asset);
+          console.log(`✅ Processed asset ${tokenId}:`, asset.name);
+          
+        } catch (assetError) {
+          console.error(`❌ Error processing asset ${tokenId}:`, assetError);
+          
+          // Add basic asset info even if metadata fetch fails
+          assetsWithMetadata.push({
+            tokenId: tokenId,
+            name: `Asset #${tokenId}`,
+            type: 'real-estate',
+            location: 'Unknown',
+            totalTokens: 1000,
+            soldTokens: 750,
+            currentValue: 0,
+            monthlyIncome: 0,
+            occupancyRate: 0,
+            lastInspection: '2024-03-01',
+            nextPayment: '2024-04-01',
+            status: 'active',
+            metadataURI: '',
+            images: []
+          });
+        }
+      }
+      
+      setAssignedAssets(assetsWithMetadata);
+      console.log(`✅ Loaded ${assetsWithMetadata.length} assigned assets`);
+      
+    } catch (error: any) {
+      console.error('❌ Error fetching assigned assets:', error);
+      toast.error(`Failed to load assigned assets: ${error.message || 'Unknown error'}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Helper functions for metadata parsing
+  const getAssetTypeFromMetadata = (metadata: any): string => {
+    if (!metadata?.attributes) return 'real-estate';
+    
+    const assetTypeAttr = metadata.attributes.find((attr: any) => 
+      attr.trait_type === 'Asset Type' || attr.trait_type === 'asset_type'
+    );
+    
+    if (assetTypeAttr?.value) {
+      const value = assetTypeAttr.value.toLowerCase();
+      if (value.includes('real') || value.includes('estate')) return 'real-estate';
+      if (value.includes('commodity') || value.includes('gold')) return 'commodity';
+      if (value.includes('bond')) return 'bonds';
+      if (value.includes('stock') || value.includes('equity')) return 'equity';
+    }
+    
+    return 'real-estate';
+  };
+
+  const getLocationFromMetadata = (metadata: any): string => {
+    if (!metadata?.assetDetails) return 'Unknown Location';
+    
+    const details = metadata.assetDetails;
+    if (details.location) return details.location;
+    if (details.city && details.state) return `${details.city}, ${details.state}`;
+    if (details.address) return details.address;
+    
+    return 'Unknown Location';
+  };
+
+  // Connect wallet function (for legacy compatibility)
+  const connectWallet = async () => {
+    try {
+      if (!isConnected) {
+        toast.error('Please connect your wallet first');
+        return;
+      }
+      
       toast.success('Wallet connected successfully!');
       
-      // Check if user is authorized manager (mock)
+    } catch (error: any) {
+      console.error('Wallet connection failed:', error);
+      toast.error(`Failed to connect wallet: ${error.message || 'Unknown error'}`);
+    }
+  };
       await checkManagerAuthorization(demoAddress);
       
     } catch (error: any) {
@@ -164,77 +447,24 @@ const ManagerDashboard: React.FC = () => {
     }
   };
 
-  // Check wallet connection on mount (mock)
+  // Legacy functions for backwards compatibility
   const checkWalletConnection = async () => {
-    try {
-      // Mock wallet connection check
-      const demoAddress = "0x3456789012345678901234567890123456789012";
-      setWalletAddress(demoAddress);
-      setWalletConnected(true);
-      await checkManagerAuthorization(demoAddress);
-    } catch (error) {
-      console.log('Mock wallet connection failed');
-      loadDemoData(); // Load demo data if mock connection fails
-    }
+    // This is now handled by the useEffect with wallet context
+    console.log('checkWalletConnection called - using wallet context instead');
   };
 
-  // Check if wallet is authorized manager (mock)
   const checkManagerAuthorization = async (address: string) => {
-    try {
-      console.log('🔄 Checking mock manager authorization for:', address);
-      
-      // Mock authorized manager addresses
-      const mockManagers = [
-        "0x3456789012345678901234567890123456789012",
-        "0x9876543210987654321098765432109876543210"
-      ];
-      
-      // Check if current address is an authorized manager
-      const isManager = mockManagers.map(addr => addr.toLowerCase()).includes(address.toLowerCase());
-      setIsAuthorizedManager(isManager);
-      
-      if (isManager) {
-        console.log('✅ User is authorized manager');
-        toast.success('Manager authorization confirmed!');
-        
-        // Get manager's assigned tokens
-        await fetchManagerAssets(address);
-      } else {
-        console.log('❌ User is not an authorized manager');
-        toast.error('Access denied: You are not an authorized manager');
-      }
-      
-    } catch (error: any) {
-      console.error('❌ Failed to check manager authorization:', error);
-      toast.error('Failed to verify manager status');
-      // Load demo data on error
-      loadDemoData();
-    }
+    // This is now handled by checkManagerAuthAndFetchAssets
+    console.log('checkManagerAuthorization called - using contract integration instead');
   };
 
-  // Fetch manager's assigned assets (mock)
   const fetchManagerAssets = async (managerAddress: string) => {
-    try {
-      setLoading(true);
-      console.log('🔄 Loading mock manager assets for:', managerAddress);
-      
-      // Mock assigned token IDs
-      const mockTokenIds = ['1001', '1002', '1003'];
-      console.log('✅ Mock manager token IDs:', mockTokenIds);
-      
-      if (mockTokenIds.length === 0) {
-        console.log('ℹ️ No assets assigned to manager');
-        setAssignedAssets([]);
-        setTotalManaged(0);
-        setTotalIncome(0);
-        return;
-      }
-      
-      // Create demo assets based on mock token IDs
-      const managedAssets: AssignedAsset[] = mockTokenIds.map((tokenId: string, index: number) => ({
-        tokenId,
-        name: `Asset #${tokenId}`,
-        type: 'real-estate' as const,
+    // This is now handled by fetchAssignedAssets
+    console.log('fetchManagerAssets called - using contract integration instead');
+    if (isAuthorizedManager) {
+      await fetchAssignedAssets();
+    }
+  };
         location: `Location ${index + 1}`,
         totalTokens: 1000,
         soldTokens: Math.floor(Math.random() * 800) + 200,
@@ -499,7 +729,7 @@ const ManagerDashboard: React.FC = () => {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        {!walletConnected ? (
+        {!isConnected ? (
           /* Wallet Connection Required */
           <div className="flex items-center justify-center min-h-[60vh]">
             <Card className={`max-w-md w-full ${isDarkMode ? 'bg-gray-900/50 border-gray-800' : 'bg-white border-gray-200'}`}>
@@ -524,7 +754,27 @@ const ManagerDashboard: React.FC = () => {
               </CardContent>
             </Card>
           </div>
-        ) : !isAuthorizedManager ? (
+        ) : authCheckLoading ? (
+          /* Authorization Check Loading */
+          <div className="flex items-center justify-center min-h-[60vh]">
+            <Card className={`max-w-md w-full ${isDarkMode ? 'bg-gray-900/50 border-gray-800' : 'bg-white border-gray-200'}`}>
+              <CardContent className="p-8 text-center">
+                <div className="w-16 h-16 bg-blue-500/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <RefreshCw className="w-8 h-8 text-blue-500 animate-spin" />
+                </div>
+                <h2 className={`text-xl font-bold mb-2 ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
+                  Checking Authorization
+                </h2>
+                <p className={`text-sm mb-6 ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                  Verifying manager permissions...
+                </p>
+                <p className={`text-xs mb-6 ${isDarkMode ? 'text-gray-500' : 'text-gray-500'}`}>
+                  Connected: {address ? `${address.slice(0, 10)}...${address.slice(-8)}` : 'Unknown'}
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+        ) : isAuthorizedManager === false ? (
           /* Not Authorized */
           <div className="flex items-center justify-center min-h-[60vh]">
             <Card className={`max-w-md w-full ${isDarkMode ? 'bg-gray-900/50 border-gray-800' : 'bg-white border-gray-200'}`}>
@@ -539,7 +789,7 @@ const ManagerDashboard: React.FC = () => {
                   Your wallet address is not authorized to access the Asset Manager Dashboard.
                 </p>
                 <p className={`text-xs mb-6 ${isDarkMode ? 'text-gray-500' : 'text-gray-500'}`}>
-                  Connected: {walletAddress.slice(0, 10)}...{walletAddress.slice(-8)}
+                  Connected: {address ? `${address.slice(0, 10)}...${address.slice(-8)}` : 'Unknown'}
                 </p>
                 <Button 
                   onClick={() => window.location.href = '/'}
@@ -572,7 +822,7 @@ const ManagerDashboard: React.FC = () => {
                     <div>
                       <p className={`text-sm font-medium ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>Assets Managed</p>
                       <p className={`text-2xl font-bold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
-                        {walletConnected && isAuthorizedManager ? totalManaged : 'N/A'}
+                        {isConnected && isAuthorizedManager ? totalManaged : 'N/A'}
                       </p>
                     </div>
                     <div className="p-3 bg-blue-500/10 rounded-lg">
@@ -582,7 +832,7 @@ const ManagerDashboard: React.FC = () => {
                   <div className="mt-4 flex items-center">
                     <ArrowUpRight className="w-4 h-4 text-green-500 mr-1" />
                     <span className="text-sm text-green-500">
-                      {walletConnected ? 'Real-time data' : 'Connect wallet to view'}
+                      {isConnected ? 'Real-time data' : 'Connect wallet to view'}
                     </span>
                   </div>
                 </CardContent>
@@ -594,7 +844,7 @@ const ManagerDashboard: React.FC = () => {
                     <div>
                       <p className={`text-sm font-medium ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>Monthly Income</p>
                       <p className={`text-2xl font-bold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
-                        {walletConnected && isAuthorizedManager ? `$${totalIncome.toLocaleString()}` : 'N/A'}
+                        {isConnected && isAuthorizedManager ? `$${totalIncome.toLocaleString()}` : 'N/A'}
                       </p>
                     </div>
                     <div className="p-3 bg-emerald-500/10 rounded-lg">
@@ -604,7 +854,7 @@ const ManagerDashboard: React.FC = () => {
                   <div className="mt-4 flex items-center">
                     <ArrowUpRight className="w-4 h-4 text-green-500 mr-1" />
                     <span className="text-sm text-green-500">
-                      {walletConnected ? 'From assigned assets' : 'Connect wallet to view'}
+                      {isConnected ? 'From assigned assets' : 'Connect wallet to view'}
                     </span>
                   </div>
                 </CardContent>
@@ -616,7 +866,7 @@ const ManagerDashboard: React.FC = () => {
                     <div>
                       <p className={`text-sm font-medium ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>Avg Occupancy</p>
                       <p className={`text-2xl font-bold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
-                        {walletConnected && isAuthorizedManager && assignedAssets.length > 0 
+                        {isConnected && isAuthorizedManager && assignedAssets.length > 0 
                           ? `${Math.round(assignedAssets.reduce((sum, asset) => sum + asset.occupancyRate, 0) / assignedAssets.length)}%`
                           : 'N/A'
                         }
@@ -639,7 +889,7 @@ const ManagerDashboard: React.FC = () => {
                     <div>
                       <p className={`text-sm font-medium ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>Total Value</p>
                       <p className={`text-2xl font-bold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
-                        {walletConnected && isAuthorizedManager 
+                        {isConnected && isAuthorizedManager 
                           ? `$${(assignedAssets.reduce((sum, asset) => sum + asset.currentValue, 0) / 1000000).toFixed(1)}M`
                           : 'N/A'
                         }
@@ -743,8 +993,8 @@ const ManagerDashboard: React.FC = () => {
                 <Button 
                   variant="outline" 
                   size="sm"
-                  onClick={() => walletConnected && fetchManagerAssets(walletAddress)}
-                  disabled={loading || !walletConnected}
+                  onClick={() => isConnected && fetchManagerAssets(address || '')}
+                  disabled={loading || !isConnected}
                 >
                   <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
                   {loading ? 'Loading...' : 'Refresh'}
@@ -772,7 +1022,7 @@ const ManagerDashboard: React.FC = () => {
                         No Assets Assigned
                       </h3>
                       <p className={`text-sm mb-6 ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                        {walletConnected ? 
+                        {isConnected ? 
                           'You currently have no assets assigned to manage. Contact the admin to get assets assigned.' :
                           'Connect your wallet to view assigned assets.'
                         }
