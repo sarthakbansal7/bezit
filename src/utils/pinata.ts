@@ -71,3 +71,28 @@ export const uploadToPinata = async (
 export const getIpfsUrl = (hash: string): string => {
   return `https://gateway.pinata.cloud/ipfs/${hash}`;
 };
+
+export const uploadJSONToPinata = async (jsonData: any): Promise<string> => {
+  try {
+    const response = await axios({
+      method: 'post',
+      url: 'https://api.pinata.cloud/pinning/pinJSONToIPFS',
+      data: jsonData,
+      headers: {
+        'pinata_api_key': PINATA_API_KEY,
+        'pinata_secret_api_key': PINATA_API_SECRET,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    console.log('✅ JSON uploaded to Pinata:', response.data.IpfsHash);
+    return response.data.IpfsHash;
+  } catch (error) {
+    console.error('Error uploading JSON to Pinata:', error);
+    if (axios.isAxiosError(error)) {
+      console.error('Response:', error.response?.data);
+      throw new Error(`Pinata JSON upload failed: ${error.response?.data?.message || error.message}`);
+    }
+    throw error;
+  }
+};
