@@ -6,7 +6,7 @@ import { Label } from '@/components/ui/label';
 import { LabelInputContainer } from '@/components/ui/form-utils';
 import { Link } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
-import { Copy, Home, TrendingUp, Building2, Plus, FileText, BarChart3, Shield, Users, Globe, Sun, Moon, Loader2, Wallet, RefreshCw, ExternalLink } from 'lucide-react';
+import { Copy, Home, TrendingUp, Building2, Plus, FileText, BarChart3, Shield, Users, Globe, Sun, Moon, Loader2, Wallet, RefreshCw, ExternalLink, Trash2 } from 'lucide-react';
 import { useWallet } from '@/context/WalletContext';
 import { ethers } from 'ethers';
 import { ADMIN_CONTRACT, ISSUER_CONTRACT, MARKETPLACE_CONTRACT, TOKEN_CONTRACT, NETWORK_CONFIG, ACTIVE_NETWORK } from '@/lib/contractAddress';
@@ -545,6 +545,59 @@ const Issuer: React.FC = () => {
       toast.error('Failed to load portfolio listings');
     } finally {
       setPortfolioLoading(false);
+    }
+  };
+
+  // Remove listing function
+  const removeListing = async (tokenId: string) => {
+    if (!marketplaceContract || !address) {
+      toast.error('Marketplace contract not available or wallet not connected');
+      return;
+    }
+
+    try {
+      console.log(`🔄 Removing listing for token ${tokenId}...`);
+      
+      // Show confirmation dialog
+      const confirmed = window.confirm(
+        `Are you sure you want to remove the listing for Token #${tokenId}? This will transfer the tokens back to your wallet.`
+      );
+      
+      if (!confirmed) {
+        return;
+      }
+
+      toast.loading('Removing listing from marketplace...');
+      
+      // Call removeListing on marketplace contract
+      const removeListingTx = await marketplaceContract.removeListing(tokenId);
+      
+      console.log('⏳ Remove listing transaction sent:', removeListingTx.hash);
+      toast.success(`Transaction sent: ${removeListingTx.hash.slice(0, 10)}...`);
+      
+      // Wait for confirmation
+      const receipt = await removeListingTx.wait();
+      console.log('✅ Remove listing transaction confirmed:', receipt.transactionHash);
+      
+      toast.success('🎉 Listing removed successfully!');
+      
+      // Refresh portfolio to reflect changes
+      await fetchPortfolioListings();
+      
+    } catch (error: any) {
+      console.error('❌ Remove listing error:', error);
+      
+      if (error.code === 4001) {
+        toast.error('Transaction rejected by user');
+      } else if (error.code === 'INSUFFICIENT_FUNDS') {
+        toast.error('Insufficient funds for transaction');
+      } else if (error.message?.includes('Not the issuer')) {
+        toast.error('You are not authorized to remove this listing');
+      } else if (error.message?.includes('Listing not active')) {
+        toast.error('This listing is not active');
+      } else {
+        toast.error(`Failed to remove listing: ${error.message || 'Unknown error'}`);
+      }
     }
   };
 
@@ -1310,6 +1363,19 @@ const Issuer: React.FC = () => {
                             >
                               <ExternalLink className="w-4 h-4 mr-2" />
                               Explorer
+                            </Button>
+                          </div>
+                          
+                          {/* Remove Listing Button */}
+                          <div className="pt-2">
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={() => removeListing(listing.tokenId)}
+                              className="w-full bg-red-600 hover:bg-red-700 text-white"
+                            >
+                              <Trash2 className="w-4 h-4 mr-2" />
+                              Remove Listing
                             </Button>
                           </div>
                         </div>
