@@ -797,29 +797,62 @@ const Admin: React.FC = () => {
   const handleRemoveUser = async () => {
     if (!selectedUser) return;
 
+    if (!signer) {
+      toast.error('Please connect your wallet');
+      return;
+    }
+
     setIsLoading(true);
     
     try {
-      console.log('🔄 Mock removing user:', selectedUser);
+      console.log('🔄 Removing user from contract:', selectedUser);
       
-      // Simulate removal delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Create admin contract instance
+      const adminContract = new ethers.Contract(ADMIN_CONTRACT, ADMIN_ABI, signer);
       
-      // Remove from local state
+      let tx;
       if (selectedUser.role === 'issuer') {
-        setIssuers(prev => prev.filter(user => user.id !== selectedUser.id));
-        toast.success('Issuer removed successfully!');
+        console.log('📞 Calling removeIssuer...');
+        tx = await adminContract.removeIssuer(selectedUser.address);
+      } else if (selectedUser.role === 'manager') {
+        console.log('📞 Calling removeManager...');
+        tx = await adminContract.removeManager(selectedUser.address);
       } else {
-        setManagers(prev => prev.filter(user => user.id !== selectedUser.id));
-        toast.success('Manager removed successfully!');
+        throw new Error('Invalid user role');
       }
+      
+      console.log('📝 Transaction sent:', tx.hash);
+      toast.loading('Transaction submitted. Waiting for confirmation...');
+      
+      // Wait for transaction confirmation
+      const receipt = await tx.wait();
+      console.log('✅ Transaction confirmed:', receipt);
+      
+      // Refresh data to show updated lists
+      await loadContractData();
+      
+      toast.success(`${selectedUser.role === 'issuer' ? 'Issuer' : 'Manager'} removed successfully!`);
       
       setShowRemoveUserDialog(false);
       setSelectedUser(null);
       
     } catch (error: any) {
       console.error('Error removing user:', error);
-      toast.error(`Failed to remove user: ${error.message}`);
+      
+      // Handle specific error cases
+      if (error.code === 'ACTION_REJECTED') {
+        toast.error('Transaction was rejected by user');
+      } else if (error.reason) {
+        toast.error(`Contract error: ${error.reason}`);
+      } else if (error.message.includes('revert')) {
+        toast.error('Transaction reverted. Check if you have admin permissions and the user exists.');
+      } else if (error.message.includes('Not an issuer')) {
+        toast.error('This address is not registered as an issuer');
+      } else if (error.message.includes('Not a manager')) {
+        toast.error('This address is not registered as a manager');
+      } else {
+        toast.error(`Failed to remove user: ${error.message}`);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -892,22 +925,65 @@ const Admin: React.FC = () => {
       return;
     }
 
+    // Validate token ID is a valid positive number
+    const tokenId = parseInt(assignTokenForm.tokenId);
+    if (isNaN(tokenId) || tokenId < 0) {
+      toast.error('Token ID must be a valid positive number');
+      return;
+    }
+
+    if (!assignTokenForm.managerAddress) {
+      toast.error('Manager address is required');
+      return;
+    }
+
+    if (!signer) {
+      toast.error('Please connect your wallet');
+      return;
+    }
+
     setIsLoading(true);
     
     try {
-      console.log('🔄 Mock assigning token to manager...', assignTokenForm);
+      console.log('🔄 Assigning token to manager...', assignTokenForm);
       
-      // Simulate delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Create admin contract instance
+      const adminContract = new ethers.Contract(ADMIN_CONTRACT, ADMIN_ABI, signer);
+      
+      // Call assignManager function
+      const tx = await adminContract.assignManager(
+        assignTokenForm.managerAddress,
+        tokenId
+      );
+      
+      console.log('📝 Transaction sent:', tx.hash);
+      toast.loading('Transaction submitted. Waiting for confirmation...');
+      
+      // Wait for transaction confirmation
+      const receipt = await tx.wait();
+      console.log('✅ Transaction confirmed:', receipt);
       
       toast.success('Token assigned to manager successfully!');
+      
+      // Refresh data to show updated assignments
+      await loadContractData();
       
       setShowAssignTokenDialog(false);
       setAssignTokenForm({ tokenId: '', managerAddress: '' });
       
     } catch (error: any) {
       console.error('Error assigning token:', error);
-      toast.error(`Failed to assign token: ${error.message}`);
+      
+      // Handle specific error cases
+      if (error.code === 'ACTION_REJECTED') {
+        toast.error('Transaction was rejected by user');
+      } else if (error.reason) {
+        toast.error(`Contract error: ${error.reason}`);
+      } else if (error.message.includes('revert')) {
+        toast.error('Transaction reverted. Check if you have admin permissions and the manager exists.');
+      } else {
+        toast.error(`Failed to assign token: ${error.message}`);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -1875,14 +1951,14 @@ const Admin: React.FC = () => {
                 </Label>
                 <Input
                   id="tokenId"
-                  type="text"
-                  placeholder="Enter token ID (e.g., token_001, asset_123...)"
+                  type="number"
+                  placeholder="Enter numeric token ID (e.g., 1, 2, 123...)"
                   value={assignTokenForm.tokenId}
                   onChange={(e) => setAssignTokenForm(prev => ({ ...prev, tokenId: e.target.value }))}
                   className={`${isDarkMode ? 'bg-slate-700 border-slate-600 text-white placeholder:text-slate-400' : 'bg-white border-slate-300'}`}
                 />
                 <p className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
-                  Enter the ID of the token you want to assign to this manager (can be alphanumeric).
+                  Enter the numeric ID of the token you want to assign to this manager.
                 </p>
               </div>
             </div>
