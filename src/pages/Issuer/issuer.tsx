@@ -110,6 +110,24 @@ const Issuer: React.FC = () => {
     createdAt: Date;
   }>>([]);
 
+  // Portfolio listings state
+  const [portfolioListings, setPortfolioListings] = useState<Array<{
+    tokenId: string;
+    name: string;
+    description: string;
+    image: string;
+    price: string; // in Wei
+    amount: number;
+    issuer: string;
+    metadataURI: string;
+    metadata?: any;
+    attributes: Array<{
+      trait_type: string;
+      value: string;
+    }>;
+  }>>([]);
+  const [portfolioLoading, setPortfolioLoading] = useState(false);
+
   // Check issuer authorization on wallet connection
   useEffect(() => {
     const initializeContractAndCheckAuth = async () => {
@@ -281,6 +299,9 @@ const Issuer: React.FC = () => {
         if (isAuthorized) {
           console.log('✅ Connected wallet is authorized as issuer');
           toast.success('Welcome, authorized issuer!');
+          
+          // Fetch portfolio listings for the authorized issuer
+          await fetchPortfolioListings();
         } else {
           console.log('❌ Connected wallet is not authorized as issuer');
           console.log('Connected address:', address);
@@ -310,6 +331,180 @@ const Issuer: React.FC = () => {
   // Legacy function for compatibility (now calls the new function)
   const fetchContractData = async () => {
     await fetchContractDataAndCheckAuth();
+  };
+
+  // Fetch portfolio listings for the connected issuer
+  const fetchPortfolioListings = async () => {
+    if (!marketplaceContract || !address) {
+      console.log('❌ Marketplace contract not initialized or address not available');
+      return;
+    }
+
+    setPortfolioLoading(true);
+    console.log('🔄 Fetching portfolio listings for issuer:', address);
+
+    try {
+      // Call getAllListings from marketplace contract
+      const listingsData = await marketplaceContract.getAllListings();
+      console.log('📋 Raw listings data from contract:', listingsData);
+
+      // Handle different response formats from getAllListings
+      let tokenIds, issuers, amounts, prices;
+      
+      if (Array.isArray(listingsData)) {
+        if (listingsData.length === 4 && Array.isArray(listingsData[0])) {
+          // Expected 4-array format: [tokenIds[], issuers[], amounts[], prices[]]
+          [tokenIds, issuers, amounts, prices] = listingsData;
+        } else {
+          console.error('❌ Unexpected response format from getAllListings');
+          toast.error('Failed to fetch listings data');
+          return;
+        }
+      } else {
+        console.error('❌ getAllListings did not return an array');
+        toast.error('Failed to fetch listings data');
+        return;
+      }
+
+      console.log('📊 Extracted data:');
+      console.log('- Token IDs:', tokenIds);
+      console.log('- Issuers:', issuers);
+      console.log('- Amounts:', amounts);
+      console.log('- Prices:', prices);
+
+      if (!tokenIds || tokenIds.length === 0) {
+        console.log('ℹ️ No listings found in marketplace');
+        setPortfolioListings([]);
+        return;
+      }
+
+      // Filter listings by connected wallet address (issuer)
+      const myListings = [];
+      for (let i = 0; i < tokenIds.length; i++) {
+        if (issuers[i].toLowerCase() === address.toLowerCase()) {
+          myListings.push({
+            tokenId: tokenIds[i].toString(),
+            issuer: issuers[i],
+            amount: amounts[i].toNumber(),
+            price: prices[i].toString()
+          });
+        }
+      }
+
+      console.log(`📊 Found ${myListings.length} listings by connected issuer`);
+
+      if (myListings.length === 0) {
+        setPortfolioListings([]);
+        return;
+      }
+
+      // Initialize token contract for metadata fetching
+      let tokenContract;
+      try {
+        const TOKEN_ABI = [
+          "function uri(uint256 tokenId) external view returns (string memory)",
+          "function tokenMetadata(uint256 tokenId) external view returns (string memory)",
+          "function tokenPrice(uint256 tokenId) external view returns (uint256)"
+        ];
+        tokenContract = new ethers.Contract(TOKEN_CONTRACT, TOKEN_ABI, signer);
+      } catch (error) {
+        console.error('❌ Failed to initialize token contract:', error);
+      }
+
+      // Process each listing and fetch metadata
+      const processedListings = [];
+      
+      for (const listing of myListings) {
+        try {
+          console.log(`🔄 Processing listing for token ${listing.tokenId}...`);
+          
+          // Get metadata from token contract
+          let metadata: any = {};
+          let metadataURI = '';
+          
+          if (tokenContract) {
+            try {
+              metadataURI = await tokenContract.tokenMetadata(listing.tokenId);
+              console.log(`📋 Metadata URI for token ${listing.tokenId}:`, metadataURI);
+              
+              // Fetch metadata if it's IPFS URI
+              if (metadataURI && metadataURI.startsWith('ipfs://')) {
+                const ipfsHash = metadataURI.replace('ipfs://', '');
+                const metadataResponse = await fetch(`https://gateway.pinata.cloud/ipfs/${ipfsHash}`);
+                if (metadataResponse.ok) {
+                  metadata = await metadataResponse.json();
+                  console.log(`✅ Metadata fetched for token ${listing.tokenId}:`, metadata);
+                }
+              }
+            } catch (error) {
+              console.warn(`⚠️ Could not fetch metadata for token ${listing.tokenId}:`, error);
+            }
+          }
+
+          // Process image URL
+          let imageUrl = '';
+          if (metadata?.image) {
+            if (metadata.image.startsWith('ipfs://')) {
+              const ipfsHash = metadata.image.replace('ipfs://', '');
+              imageUrl = `https://gateway.pinata.cloud/ipfs/${ipfsHash}`;
+            } else if (metadata.image.startsWith('http')) {
+              imageUrl = metadata.image;
+            }
+          }
+
+          // Fallback image based on asset type
+          if (!imageUrl) {
+            const assetType = metadata?.attributes?.find((attr: any) => 
+              attr.trait_type === 'Asset Type'
+            )?.value || 'Real Estate';
+            
+            const fallbackImages = {
+              'Real Estate': 'https://images.unsplash.com/photo-1560472354-b33ff0c44a43?w=800&h=600&fit=crop',
+              'Invoice': 'https://images.unsplash.com/photo-1554224155-6726b3ff858f?w=800&h=600&fit=crop',
+              'Stocks': 'https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?w=800&h=600&fit=crop',
+              'Commodity': 'https://images.unsplash.com/photo-1622976520928-53c6b59f4e7e?w=800&h=600&fit=crop',
+              'CarbonCredit': 'https://images.unsplash.com/photo-1569163139342-de0874c4e2c5?w=800&h=600&fit=crop'
+            };
+            imageUrl = fallbackImages[assetType as keyof typeof fallbackImages] || fallbackImages['Real Estate'];
+          }
+
+          const processedListing = {
+            tokenId: listing.tokenId,
+            name: metadata?.name || `Asset #${listing.tokenId}`,
+            description: metadata?.description || `A tokenized asset with ID ${listing.tokenId}`,
+            image: imageUrl,
+            price: listing.price,
+            amount: listing.amount,
+            issuer: listing.issuer,
+            metadataURI,
+            metadata,
+            attributes: metadata?.attributes || [
+              { trait_type: 'Asset Type', value: 'Real Estate' },
+              { trait_type: 'Token ID', value: listing.tokenId }
+            ]
+          };
+
+          processedListings.push(processedListing);
+          console.log(`✅ Processed listing for token ${listing.tokenId}:`, processedListing.name);
+
+        } catch (error) {
+          console.error(`❌ Error processing listing for token ${listing.tokenId}:`, error);
+        }
+      }
+
+      setPortfolioListings(processedListings);
+      console.log(`✅ Portfolio listings loaded: ${processedListings.length} assets`);
+
+      if (processedListings.length > 0) {
+        toast.success(`Found ${processedListings.length} assets in your portfolio`);
+      }
+
+    } catch (error: any) {
+      console.error('❌ Error fetching portfolio listings:', error);
+      toast.error('Failed to load portfolio listings');
+    } finally {
+      setPortfolioLoading(false);
+    }
   };
 
   const handleNftImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -945,11 +1140,17 @@ const Issuer: React.FC = () => {
               </div>
             </div>
             <div className="p-6">
-              {createdTokens.length === 0 ? (
+              {portfolioLoading ? (
+                <div className="text-center py-12">
+                  <Loader2 className={`w-12 h-12 ${isDarkMode ? 'text-gray-400' : 'text-gray-300'} mx-auto mb-4 animate-spin`} />
+                  <h4 className={`text-lg font-medium ${isDarkMode ? 'text-white' : 'text-gray-900'} mb-2`}>Loading Portfolio</h4>
+                  <p className={`${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>Fetching your listed assets from the marketplace...</p>
+                </div>
+              ) : portfolioListings.length === 0 ? (
                 <div className="text-center py-12">
                   <Building2 className={`w-12 h-12 ${isDarkMode ? 'text-gray-400' : 'text-gray-300'} mx-auto mb-4`} />
-                  <h4 className={`text-lg font-medium ${isDarkMode ? 'text-white' : 'text-gray-900'} mb-2`}>No Assets Yet</h4>
-                  <p className={`${isDarkMode ? 'text-gray-400' : 'text-gray-500'} mb-4`}>Start by tokenizing your first real-world asset</p>
+                  <h4 className={`text-lg font-medium ${isDarkMode ? 'text-white' : 'text-gray-900'} mb-2`}>No Assets Listed</h4>
+                  <p className={`${isDarkMode ? 'text-gray-400' : 'text-gray-500'} mb-4`}>Start by tokenizing and listing your first real-world asset</p>
                   <Button 
                     onClick={() => setShowNFTDialog(true)}
                     className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2"
@@ -959,53 +1160,131 @@ const Issuer: React.FC = () => {
                   </Button>
                 </div>
               ) : (
-                <div className="space-y-4">
-                  <h4 className={`text-lg font-medium ${isDarkMode ? 'text-white' : 'text-gray-900'} mb-4`}>Your Created Tokens</h4>
-                  {createdTokens.map((token, index) => (
-                    <div key={index} className={`p-4 rounded-lg border ${isDarkMode ? 'bg-gray-800/50 border-gray-700' : 'bg-gray-50 border-gray-200'}`}>
-                      <div className="flex items-center justify-between">
-                        <div className="flex-1">
-                          <h5 className={`font-medium ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>{token.name}</h5>
-                          <p className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'} mt-1`}>
-                            Token Address: <span className="font-mono text-xs">{token.tokenId}</span>
-                          </p>
-                          <div className="flex items-center space-x-4 mt-2 text-sm">
-                            <span className={`${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-                              Supply: {token.amount}
-                            </span>
-                            <span className={`${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-                              Price: {token.price} ETH
-                            </span>
+                <div className="space-y-6">
+                  <div className="flex items-center justify-between">
+                    <h4 className={`text-lg font-medium ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
+                      Your Listed Assets ({portfolioListings.length})
+                    </h4>
+                    <Button 
+                      onClick={fetchPortfolioListings}
+                      variant="outline"
+                      size="sm"
+                      disabled={portfolioLoading}
+                      className={`${isDarkMode ? 'text-gray-300 border-gray-700 hover:bg-gray-800 hover:text-white' : 'text-gray-600 border-gray-300 hover:bg-gray-50'}`}
+                    >
+                      <RefreshCw className={`w-4 h-4 mr-2 ${portfolioLoading ? 'animate-spin' : ''}`} />
+                      Refresh
+                    </Button>
+                  </div>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {portfolioListings.map((listing, index) => (
+                      <div key={index} className={`p-6 rounded-lg border ${isDarkMode ? 'bg-gray-800/50 border-gray-700' : 'bg-gray-50 border-gray-200'} hover:shadow-lg transition-shadow`}>
+                        {/* Asset Image */}
+                        <div className="aspect-square w-full mb-4 rounded-lg overflow-hidden bg-gray-200">
+                          <img
+                            src={listing.image}
+                            alt={listing.name}
+                            className="w-full h-full object-cover"
+                            onError={(e) => {
+                              const target = e.target as HTMLImageElement;
+                              target.src = 'https://images.unsplash.com/photo-1560472354-b33ff0c44a43?w=800&h=600&fit=crop';
+                            }}
+                          />
+                        </div>
+                        
+                        {/* Asset Info */}
+                        <div className="space-y-3">
+                          <div>
+                            <h5 className={`font-semibold text-lg ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
+                              {listing.name}
+                            </h5>
+                            <p className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'} mt-1 line-clamp-2`}>
+                              {listing.description}
+                            </p>
+                          </div>
+                          
+                          {/* Asset Details */}
+                          <div className="space-y-2 text-sm">
+                            <div className="flex justify-between">
+                              <span className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>Token ID:</span>
+                              <span className={`font-mono ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                                #{listing.tokenId}
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>Available:</span>
+                              <span className={`font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                                {listing.amount} tokens
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>Price per Token:</span>
+                              <span className={`font-bold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
+                                {ethers.utils.formatEther(listing.price)} ETH
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>Total Value:</span>
+                              <span className={`font-bold text-green-500`}>
+                                {(parseFloat(ethers.utils.formatEther(listing.price)) * listing.amount).toFixed(4)} ETH
+                              </span>
+                            </div>
+                          </div>
+                          
+                          {/* Asset Type Badge */}
+                          <div className="flex items-center space-x-2">
+                            {listing.attributes?.map((attr, attrIndex) => (
+                              attr.trait_type === 'Asset Type' && (
+                                <span
+                                  key={attrIndex}
+                                  className={`px-2 py-1 text-xs rounded-full font-medium ${
+                                    isDarkMode 
+                                      ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' 
+                                      : 'bg-blue-100 text-blue-800 border border-blue-200'
+                                  }`}
+                                >
+                                  {attr.value}
+                                </span>
+                              )
+                            ))}
+                          </div>
+                          
+                          {/* Action Buttons */}
+                          <div className="flex items-center space-x-2 pt-3">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => copyToClipboard(listing.tokenId)}
+                              className={`flex-1 ${isDarkMode ? 'border-gray-600 text-gray-300 hover:bg-gray-700' : 'border-gray-300 text-gray-600 hover:bg-gray-50'}`}
+                            >
+                              <Copy className="w-4 h-4 mr-2" />
+                              Copy ID
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => window.open(`${NETWORK_CONFIG[ACTIVE_NETWORK].blockExplorer}/token/${listing.tokenId}`, '_blank')}
+                              className={`flex-1 ${isDarkMode ? 'border-gray-600 text-gray-300 hover:bg-gray-700' : 'border-gray-300 text-gray-600 hover:bg-gray-50'}`}
+                            >
+                              <ExternalLink className="w-4 h-4 mr-2" />
+                              Explorer
+                            </Button>
                           </div>
                         </div>
-                        <div className="flex items-center space-x-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => copyToClipboard(token.tokenId)}
-                            className={`${isDarkMode ? 'border-gray-600 text-gray-300 hover:bg-gray-700' : 'border-gray-300 text-gray-600 hover:bg-gray-50'}`}
-                          >
-                            <Copy className="w-4 h-4" />
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => window.open(`https://hashscan.io/testnet/token/${token.tokenId}`, '_blank')}
-                            className={`${isDarkMode ? 'border-gray-600 text-gray-300 hover:bg-gray-700' : 'border-gray-300 text-gray-600 hover:bg-gray-50'}`}
-                          >
-                            <ExternalLink className="w-4 h-4" />
-                          </Button>
-                        </div>
                       </div>
-                    </div>
-                  ))}
-                  <Button 
-                    onClick={() => setShowNFTDialog(true)}
-                    className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg transition-colors"
-                  >
-                    <Plus className="w-4 h-4 mr-2" />
-                    Create Another Asset
-                  </Button>
+                    ))}
+                  </div>
+                  
+                  <div className="text-center pt-6">
+                    <Button 
+                      onClick={() => setShowNFTDialog(true)}
+                      className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-lg transition-colors"
+                    >
+                      <Plus className="w-4 h-4 mr-2" />
+                      Tokenize Another Asset
+                    </Button>
+                  </div>
                 </div>
               )}
             </div>
