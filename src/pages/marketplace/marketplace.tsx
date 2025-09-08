@@ -16,12 +16,12 @@ import { useWallet } from '@/context/WalletContext';
 import { MARKETPLACE_CONTRACT, TOKEN_CONTRACT, NETWORK_CONFIG, ACTIVE_NETWORK } from '@/lib/contractAddress';
 import { MARKETPLACE_ABI } from '@/utils/marketplaceABI';
 
-// Alternative RPC endpoints for Arbitrum Sepolia
-const ARBITRUM_SEPOLIA_RPC_URLS = [
-  "https://sepolia-rollup.arbitrum.io/rpc",
-  "https://arbitrum-sepolia.blockpi.network/v1/rpc/public",
-  "https://arbitrum-sepolia.drpc.org",
-  "https://arbitrum-sepolia-rpc.publicnode.com"
+// Alternative RPC endpoints for Sonic Testnet
+const SONIC_TESTNET_RPC_URLS = [
+  "https://rpc.testnet.soniclabs.com",
+  "https://rpc.testnet.soniclabs.com", // Backup - same URL as primary for now
+  "https://rpc.testnet.soniclabs.com", // Backup - same URL as primary for now
+  "https://rpc.testnet.soniclabs.com"  // Backup - same URL as primary for now
 ];
 
 // Demo marketplace data for fallback when RPC is having issues
@@ -31,7 +31,7 @@ const DEMO_MARKETPLACE_DATA = [
     name: "Luxury Villa in Miami",
     description: "A beautiful beachfront villa with stunning ocean views",
     image: "https://images.unsplash.com/photo-1571896349842-33c89424de2d?w=400",
-    price: "250000000000000000000000", // 250,000 ETH in Wei
+    price: "250000000000000000000000", // 250,000 S in Wei
     amount: 100,
     seller: "0x1234567890123456789012345678901234567890",
     metadataURI: "demo://villa-miami",
@@ -48,7 +48,7 @@ const DEMO_MARKETPLACE_DATA = [
     name: "Gold Bullion Investment",
     description: "Premium 1oz gold bars with certified authenticity",
     image: "https://images.unsplash.com/photo-1622976520928-53c6b59f4e7e?w=400",
-    price: "2100000000000000000000", // 2,100 ETH in Wei
+    price: "2100000000000000000000", // 2,100 S in Wei
     amount: 50,
     seller: "0x2345678901234567890123456789012345678901",
     metadataURI: "demo://gold-bullion",
@@ -64,7 +64,7 @@ const DEMO_MARKETPLACE_DATA = [
     name: "Vintage Wine Collection",
     description: "Rare vintage wines from French vineyards",
     image: "https://images.unsplash.com/photo-1506377247886-a2c6fa3bf4fd?w=400",
-    price: "5000000000000000000000", // 5,000 ETH in Wei
+    price: "5000000000000000000000", // 5,000 S in Wei
     amount: 25,
     seller: "0x3456789012345678901234567890123456789012",
     metadataURI: "demo://vintage-wine",
@@ -106,7 +106,7 @@ const Marketplace: React.FC = () => {
   const [error, setError] = useState<string>('');
   const [selectedListing, setSelectedListing] = useState<MarketplaceListing | null>(null);
   const [showDetails, setShowDetails] = useState<MarketplaceListing | null>(null);
-  const [ethPrice, setEthPrice] = useState<number>(2500); // Default ETH price
+  const [ethPrice, setEthPrice] = useState<number>(2500); // Default S price
   const [priceLoading, setPriceLoading] = useState(true);
   
   // Wallet and contract integration
@@ -139,10 +139,10 @@ const Marketplace: React.FC = () => {
         console.log('⚠️ No wallet provider, trying public RPC endpoints...');
         
         // Try multiple RPC endpoints
-        for (let i = 0; i < ARBITRUM_SEPOLIA_RPC_URLS.length; i++) {
+        for (let i = 0; i < SONIC_TESTNET_RPC_URLS.length; i++) {
           try {
-            console.log(`🔄 Trying RPC endpoint ${i + 1}/${ARBITRUM_SEPOLIA_RPC_URLS.length}: ${ARBITRUM_SEPOLIA_RPC_URLS[i]}`);
-            providerToUse = new ethers.providers.JsonRpcProvider(ARBITRUM_SEPOLIA_RPC_URLS[i]);
+            console.log(`🔄 Trying RPC endpoint ${i + 1}/${SONIC_TESTNET_RPC_URLS.length}: ${SONIC_TESTNET_RPC_URLS[i]}`);
+            providerToUse = new ethers.providers.JsonRpcProvider(SONIC_TESTNET_RPC_URLS[i]);
             
             // Test the connection
             await providerToUse.getNetwork();
@@ -150,7 +150,7 @@ const Marketplace: React.FC = () => {
             break;
           } catch (rpcError) {
             console.warn(`❌ RPC endpoint ${i + 1} failed:`, rpcError);
-            if (i === ARBITRUM_SEPOLIA_RPC_URLS.length - 1) {
+            if (i === SONIC_TESTNET_RPC_URLS.length - 1) {
               throw new Error('All RPC endpoints failed. Using demo data.');
             }
           }
@@ -229,10 +229,10 @@ const Marketplace: React.FC = () => {
     try {
       const price = await fetchETHPrice();
       setEthPrice(price);
-      console.log(`ETH price loaded: $${price}`);
+      console.log(`S price loaded: $${price}`);
     } catch (error) {
-      console.error('Failed to fetch ETH price:', error);
-      toast.error('Failed to fetch ETH price, using fallback');
+      console.error('Failed to fetch S price:', error);
+      toast.error('Failed to fetch S price, using fallback');
     } finally {
       setPriceLoading(false);
     }
@@ -446,7 +446,7 @@ const Marketplace: React.FC = () => {
             console.log('🔄 Trying with fallback RPC provider...');
             try {
               const fallbackProvider = new ethers.providers.JsonRpcProvider(
-                ARBITRUM_SEPOLIA_RPC_URLS[attempt % ARBITRUM_SEPOLIA_RPC_URLS.length]
+                SONIC_TESTNET_RPC_URLS[attempt % SONIC_TESTNET_RPC_URLS.length]
               );
               const fallbackContract = new ethers.Contract(MARKETPLACE_CONTRACT, MARKETPLACE_ABI, fallbackProvider);
               listingsData = await fallbackContract.getAllListings();
@@ -519,7 +519,7 @@ const Marketplace: React.FC = () => {
                 const tokenContract = new ethers.Contract(tokenContractAddress, TOKEN_ABI, marketplaceContract.provider);
                 const tokenPrice = await tokenContract.tokenPrice(tokenId);
                 prices.push(tokenPrice);
-                console.log(`💰 Token ${tokenId} price: ${ethers.utils.formatEther(tokenPrice)} ETH`);
+                console.log(`💰 Token ${tokenId} price: ${ethers.utils.formatEther(tokenPrice)} S`);
               } catch (priceError) {
                 console.warn(`⚠️ Could not fetch price for token ${tokenId}:`, priceError);
                 prices.push(ethers.utils.parseEther("1000")); // Default price
@@ -1189,7 +1189,7 @@ const FeaturedPropertiesCarousel: React.FC<{
                     {formatPriceInUSD(parseFloat(listings[currentIndex].price) / Math.pow(10, 18), tokenPrice)}
                   </div>
                   <div className="text-gray-200 text-sm">
-                    Price per token ({(parseFloat(listings[currentIndex].price) / Math.pow(10, 18)).toFixed(4)} ETH)
+                    Price per token ({(parseFloat(listings[currentIndex].price) / Math.pow(10, 18)).toFixed(4)} S)
                   </div>
                 </div>
                 <div className="text-right">
@@ -1364,7 +1364,7 @@ const ProfessionalListingsGrid: React.FC<{
                   <p className="text-2xl font-bold bg-gradient-to-r from-gray-800 to-black bg-clip-text text-transparent">
                     {formatPriceInUSD(parseFloat(listing.price) / Math.pow(10, 18), tokenPrice)}
                   </p>
-                  <p className="text-xs text-gray-500">Price per token ({(parseFloat(listing.price) / Math.pow(10, 18)).toFixed(4)} ETH)</p>
+                  <p className="text-xs text-gray-500">Price per token ({(parseFloat(listing.price) / Math.pow(10, 18)).toFixed(4)} S)</p>
                 </div>
                 <div className="text-right">
                   <p className="text-sm font-medium text-green-600">{listing.amount} Available</p>
@@ -1450,7 +1450,7 @@ const ProfessionalExpandedDetail: React.FC<{
                   <span>Available Now</span>
                 </div>
                 <span>•</span>
-                <span>{(parseFloat(listing.price) / Math.pow(10, 18)).toFixed(4)} ETH per token</span>
+                <span>{(parseFloat(listing.price) / Math.pow(10, 18)).toFixed(4)} S per token</span>
                 <span>•</span>
                 <span>Seller: {listing.seller.slice(0, 6)}...{listing.seller.slice(-4)}</span>
               </div>

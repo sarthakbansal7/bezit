@@ -4,20 +4,23 @@ export interface PriceData {
   timestamp: number;
 }
 
-let cachedETHPrice: PriceData | null = null;
+let cachedTokenPrice: PriceData | null = null;
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
-// Fetch ETH price from CoinGecko API
+// Fetch native token price (S) from CoinGecko API
+// Currently using ETH price as fallback since Sonic (S) may not be available on CoinGecko yet
 export const fetchETHPrice = async (): Promise<number> => {
   // Check cache first
-  if (cachedETHPrice && Date.now() - cachedETHPrice.timestamp < CACHE_DURATION) {
-    console.log(`Using cached ETH price: $${cachedETHPrice.usd}`);
-    return cachedETHPrice.usd;
+  if (cachedTokenPrice && Date.now() - cachedTokenPrice.timestamp < CACHE_DURATION) {
+    console.log(`Using cached token price: $${cachedTokenPrice.usd}`);
+    return cachedTokenPrice.usd;
   }
 
   try {
-    console.log('🔄 Fetching ETH price from CoinGecko...');
+    console.log('🔄 Fetching token price from CoinGecko...');
     
+    // TODO: Update to use Sonic token ID when available on CoinGecko
+    // For now using ETH as price reference
     const response = await fetch(
       'https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd',
       {
@@ -33,28 +36,28 @@ export const fetchETHPrice = async (): Promise<number> => {
     }
 
     const data = await response.json();
-    const ethPrice = data.ethereum?.usd;
+    const tokenPrice = data.ethereum?.usd;
 
-    if (!ethPrice || typeof ethPrice !== 'number') {
-      throw new Error('Invalid ETH price data from CoinGecko');
+    if (!tokenPrice || typeof tokenPrice !== 'number') {
+      throw new Error('Invalid token price data from CoinGecko');
     }
 
-    cachedETHPrice = {
-      usd: ethPrice,
+    cachedTokenPrice = {
+      usd: tokenPrice,
       timestamp: Date.now()
     };
 
-    console.log(`✅ ETH price fetched from CoinGecko: $${ethPrice}`);
-    return ethPrice;
+    console.log(`✅ Token price fetched from CoinGecko: $${tokenPrice}`);
+    return tokenPrice;
 
   } catch (error) {
-    console.error('❌ Error fetching ETH price from CoinGecko:', error);
+    console.error('❌ Error fetching token price from CoinGecko:', error);
     
-    // Fallback to a reasonable ETH price if API fails
-    const fallbackPrice = 2500; // ~$2500 USD as fallback
-    console.log(`⚠️ Using fallback ETH price: $${fallbackPrice}`);
+    // Fallback to a reasonable token price if API fails
+    const fallbackPrice = 2500; // ~$2500 USD as fallback (using ETH reference price)
+    console.log(`⚠️ Using fallback token price: $${fallbackPrice}`);
     
-    cachedETHPrice = {
+    cachedTokenPrice = {
       usd: fallbackPrice,
       timestamp: Date.now()
     };
@@ -63,7 +66,7 @@ export const fetchETHPrice = async (): Promise<number> => {
   }
 };
 
-// Backward compatibility - use ETH price as token price
+// Backward compatibility - use token price as native token price
 export const fetchTokenPrice = fetchETHPrice;
 
 export const formatPriceInUSD = (tokenAmount: number, tokenPrice: number): string => {
@@ -84,18 +87,18 @@ export const convertTokenToUSD = (tokenAmount: string | number, tokenPrice: numb
   return tokenValue * tokenPrice;
 };
 
-// Helper function to convert ETH wei to USD
-export const convertETHToUSD = (ethAmount: string, ethPrice: number): number => {
-  const ethValue = parseFloat(ethAmount);
-  return ethValue * ethPrice;
+// Helper function to convert native token (S) wei to USD
+export const convertETHToUSD = (tokenAmount: string, tokenPrice: number): number => {
+  const tokenValue = parseFloat(tokenAmount);
+  return tokenValue * tokenPrice;
 };
 
-// Format ETH amount with USD equivalent
-export const formatETHWithUSD = (ethAmount: string, ethPrice: number): string => {
-  const ethValue = parseFloat(ethAmount);
-  const usdValue = ethValue * ethPrice;
+// Format native token amount with USD equivalent
+export const formatETHWithUSD = (tokenAmount: string, tokenPrice: number): string => {
+  const tokenValue = parseFloat(tokenAmount);
+  const usdValue = tokenValue * tokenPrice;
   
-  return `${ethValue.toFixed(4)} ETH (~$${usdValue.toLocaleString('en-US', { 
+  return `${tokenValue.toFixed(4)} S (~$${usdValue.toLocaleString('en-US', { 
     minimumFractionDigits: 2, 
     maximumFractionDigits: 2 
   })})`;

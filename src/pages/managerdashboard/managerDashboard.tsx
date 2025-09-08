@@ -81,7 +81,7 @@ interface AssignedAsset {
 interface RentalSubmission {
   tokenId: string;
   assetName: string;
-  amount: number; // Amount in ETH (supports decimals like 0.002)
+  amount: number; // Amount in S (supports decimals like 0.002)
   month: string;
   type: 'rental' | 'dividend' | 'interest';
   notes: string;
@@ -607,13 +607,13 @@ const ManagerDashboard: React.FC = () => {
     try {
       console.log('🔄 Submitting rental income to payment splitter...');
       console.log('Token ID:', rentalForm.tokenId);
-      console.log('Amount (ETH):', rentalForm.amount);
+      console.log('Amount (S):', rentalForm.amount);
       
-      // Convert ETH amount to wei for the contract call
+      // Convert S amount to wei for the contract call
       const amountInWei = ethers.utils.parseEther(rentalForm.amount.toString());
       console.log('Amount in Wei:', amountInWei.toString());
       
-      // Call submitRental on PaymentSplitter contract with the ETH amount
+      // Call submitRental on PaymentSplitter contract with the S amount
       const tx = await paymentSplitterContract.submitRental(rentalForm.tokenId, {
         value: amountInWei,
         gasLimit: 500000 // Set a reasonable gas limit
@@ -651,7 +651,7 @@ const ManagerDashboard: React.FC = () => {
         receipts: []
       });
       
-      toast.success(`Rental income of ${rentalForm.amount} ETH distributed successfully!`);
+      toast.success(`Rental income of ${rentalForm.amount} S distributed successfully!`);
       
     } catch (error: any) {
       console.error('❌ Error submitting rental income:', error);
@@ -1406,13 +1406,13 @@ const ManagerDashboard: React.FC = () => {
             </div>
 
             <div>
-              <Label htmlFor="amount" className={`${isDarkMode ? 'text-gray-200' : 'text-gray-700'}`}>Amount (ETH)</Label>
+              <Label htmlFor="amount" className={`${isDarkMode ? 'text-gray-200' : 'text-gray-700'}`}>Amount (S)</Label>
               <Input
                 id="amount"
                 type="number"
                 step="0.001"
                 min="0"
-                placeholder="Enter amount in ETH (e.g., 0.002)"
+                placeholder="Enter amount in S (e.g., 0.002)"
                 value={rentalForm.amount || ''}
                 onChange={(e) => setRentalForm(prev => ({ ...prev, amount: Number(e.target.value) }))}
                 className={`${isDarkMode ? 'bg-gray-800 border-gray-600 text-white' : 'bg-white border-gray-300'}`}

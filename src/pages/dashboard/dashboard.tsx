@@ -497,16 +497,16 @@ const Dashboard: React.FC = () => {
     }
 
     // Calculate total value by summing (amount * price) for all assets
-    // Price is in Wei, convert to ETH by dividing by 10^18
+    // Price is in Wei, convert to S by dividing by 10^18
     const totalValueETH = assets.reduce((sum, asset) => {
       const pricePerTokenWei = ethers.BigNumber.from(asset.price);
-      const pricePerTokenETH = parseFloat(ethers.utils.formatEther(pricePerTokenWei)); // Convert Wei to ETH
+      const pricePerTokenETH = parseFloat(ethers.utils.formatEther(pricePerTokenWei)); // Convert Wei to S
       const assetTotalValue = pricePerTokenETH * asset.amount;
-      console.log(`Asset ${asset.tokenId}: ${asset.amount} tokens × ${pricePerTokenETH.toFixed(6)} ETH = ${assetTotalValue.toFixed(6)} ETH`);
+      console.log(`Asset ${asset.tokenId}: ${asset.amount} tokens × ${pricePerTokenETH.toFixed(6)} S = ${assetTotalValue.toFixed(6)} S`);
       return sum + assetTotalValue;
     }, 0);
 
-    console.log(`Total portfolio value: ${totalValueETH.toFixed(6)} ETH`);
+    console.log(`Total portfolio value: ${totalValueETH.toFixed(6)} S`);
 
     // Use total value as current investment (real portfolio value)
     const totalInvestment = totalValueETH;
@@ -519,7 +519,7 @@ const Dashboard: React.FC = () => {
     // Yearly income = 8% of current value per year
     const yearlyIncome = currentValue * 0.08;
 
-    console.log(`Yearly income calculation: ${currentValue.toFixed(6)} ETH × 0.08 = ${yearlyIncome.toFixed(6)} ETH`);
+    console.log(`Yearly income calculation: ${currentValue.toFixed(6)} S × 0.08 = ${yearlyIncome.toFixed(6)} S`);
 
     setPortfolioData({
       totalInvestment,
@@ -591,7 +591,7 @@ const Dashboard: React.FC = () => {
           type: 'buy',
           tokenId: args!.tokenId.toString(),
           amount: args!.amount.toNumber(),
-          price: ethers.utils.formatEther(transaction.value || '0'), // Transaction value in ETH
+          price: ethers.utils.formatEther(transaction.value || '0'), // Transaction value in S
           from: transaction.from,
           to: transaction.to || MARKETPLACE_CONTRACT,
           gasUsed: receipt.gasUsed.toString(),
@@ -681,9 +681,9 @@ const Dashboard: React.FC = () => {
       console.log('💰 Transaction details:', {
         tokenId: selectedAsset.tokenId,
         amount: amount,
-        tokenPrice: ethers.utils.formatEther(tokenPrice) + ' ETH',
-        totalValue: ethers.utils.formatEther(totalValue) + ' ETH',
-        platformFee: ethers.utils.formatEther(platformFee) + ' ETH'
+        tokenPrice: ethers.utils.formatEther(tokenPrice) + ' S',
+        totalValue: ethers.utils.formatEther(totalValue) + ' S',
+        platformFee: ethers.utils.formatEther(platformFee) + ' S'
       });
       
       // Call sellAsset function on marketplace contract
@@ -710,7 +710,7 @@ const Dashboard: React.FC = () => {
       const platformFeeEth = parseFloat(ethers.utils.formatEther(platformFee));
       
       toast.success(
-        `Successfully sold ${amount} tokens for ${totalEthReceived.toFixed(4)} ETH! Platform fee: ${platformFeeEth.toFixed(4)} ETH`,
+        `Successfully sold ${amount} tokens for ${totalEthReceived.toFixed(4)} S! Platform fee: ${platformFeeEth.toFixed(4)} S`,
         { duration: 5000 }
       );
       
@@ -735,11 +735,11 @@ const Dashboard: React.FC = () => {
       } else if (error.message?.includes('Insufficient marketplace funds')) {
         errorMessage = 'Marketplace has insufficient funds to buy back this asset';
       } else if (error.message?.includes('Must pay platform fee')) {
-        errorMessage = 'Failed to pay platform fee. Please ensure sufficient ETH balance.';
+        errorMessage = 'Failed to pay platform fee. Please ensure sufficient S balance.';
       } else if (error.code === 'ACTION_REJECTED') {
         errorMessage = 'Transaction was cancelled by user';
       } else if (error.code === 'INSUFFICIENT_FUNDS') {
-        errorMessage = 'Insufficient ETH for gas fees and platform fee';
+        errorMessage = 'Insufficient S for gas fees and platform fee';
       } else {
         errorMessage = `Transaction failed: ${error.message || 'Unknown error'}`;
       }
@@ -913,7 +913,7 @@ const Dashboard: React.FC = () => {
           <div className="flex-1">
             <h3 className="text-sm md:text-base font-semibold text-gray-900">Portfolio Value</h3>
             <p className="text-base md:text-xl font-bold text-gray-900">
-              {chartData[chartData.length - 1].toFixed(4)} ETH
+              {chartData[chartData.length - 1].toFixed(4)} S
             </p>
             <p className={`text-xs md:text-sm ${parseFloat(currentGrowth) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
               {parseFloat(currentGrowth) >= 0 ? '+' : ''}{currentGrowth}% (6 months)
@@ -989,7 +989,7 @@ const Dashboard: React.FC = () => {
                       strokeWidth="2"
                       className="drop-shadow-sm"
                     >
-                      <title>{value.toFixed(4)} ETH</title>
+                      <title>{value.toFixed(4)} S</title>
                     </circle>
                   );
                 }
@@ -998,10 +998,10 @@ const Dashboard: React.FC = () => {
               
               {/* Y-axis labels */}
               <text x={padding - 10} y={padding + 5} textAnchor="end" className="text-xs fill-gray-500 font-medium">
-                {maxValue.toFixed(3)} ETH
+                {maxValue.toFixed(3)} S
               </text>
               <text x={padding - 10} y={height - padding + 5} textAnchor="end" className="text-xs fill-gray-500 font-medium">
-                {minValue.toFixed(3)} ETH
+                {minValue.toFixed(3)} S
               </text>
               
               {/* X-axis labels */}
@@ -1019,11 +1019,11 @@ const Dashboard: React.FC = () => {
         <div className="mt-3 md:mt-4 grid grid-cols-3 gap-2 md:gap-4 pt-3 border-t border-gray-100">
           <div className="text-center">
             <p className="text-xs text-gray-500 font-medium">HIGHEST</p>
-            <p className="text-xs md:text-sm font-bold text-gray-900">{maxValue.toFixed(4)} ETH</p>
+            <p className="text-xs md:text-sm font-bold text-gray-900">{maxValue.toFixed(4)} S</p>
           </div>
           <div className="text-center">
             <p className="text-xs text-gray-500 font-medium">LOWEST</p>
-            <p className="text-xs md:text-sm font-bold text-gray-900">{minValue.toFixed(4)} ETH</p>
+            <p className="text-xs md:text-sm font-bold text-gray-900">{minValue.toFixed(4)} S</p>
           </div>
           <div className="text-center">
             <p className="text-xs text-gray-500 font-medium">GROWTH</p>
@@ -1076,7 +1076,7 @@ const Dashboard: React.FC = () => {
         <div className="mb-3 md:mb-4 text-center">
           <h3 className="text-sm md:text-base font-semibold text-gray-900">Asset Distribution</h3>
           <p className="text-base md:text-xl font-bold text-gray-900">{userAssets.length} Assets</p>
-          <p className="text-xs md:text-sm text-gray-600">{total.toFixed(4)} ETH Total</p>
+          <p className="text-xs md:text-sm text-gray-600">{total.toFixed(4)} S Total</p>
         </div>
         
         {/* Chart Container */}
@@ -1132,7 +1132,7 @@ const Dashboard: React.FC = () => {
                 Total Value
               </text>
               <text x={centerX} y={centerY + 8} textAnchor="middle" className="text-xs md:text-sm fill-gray-900 font-bold">
-                {total.toFixed(3)} ETH
+                {total.toFixed(3)} S
               </text>
             </svg>
           </div>
@@ -1153,7 +1153,7 @@ const Dashboard: React.FC = () => {
                 </div>
                 <div className="text-right flex-shrink-0">
                   <p className="text-xs md:text-sm font-bold text-gray-900">{percentage.toFixed(1)}%</p>
-                  <p className="text-xs text-gray-500">{value.toFixed(3)} ETH</p>
+                  <p className="text-xs text-gray-500">{value.toFixed(3)} S</p>
                 </div>
               </div>
             );
@@ -1194,7 +1194,7 @@ const Dashboard: React.FC = () => {
                       <p className="text-xs md:text-sm font-medium text-gray-600 mb-2">TOTAL INVESTMENT</p>
                       <div className="flex items-center space-x-2 mb-2">
                         <p className="text-base md:text-lg lg:text-xl font-bold text-gray-900 truncate">
-                          {balanceVisible ? `${portfolioData.totalInvestment.toFixed(4)} ETH` : '••••••'}
+                          {balanceVisible ? `${portfolioData.totalInvestment.toFixed(4)} S` : '••••••'}
                         </p>
                         <Button
                           variant="ghost"
@@ -1222,7 +1222,7 @@ const Dashboard: React.FC = () => {
                     <div className="flex-1 min-w-0 pr-2">
                       <p className="text-xs md:text-sm font-medium text-gray-600 mb-2">CURRENT VALUE</p>
                       <p className="text-base md:text-lg lg:text-xl font-bold text-gray-900 mb-2 truncate">
-                        {balanceVisible ? `${portfolioData.currentValue.toFixed(4)} ETH` : '••••••'}
+                        {balanceVisible ? `${portfolioData.currentValue.toFixed(4)} S` : '••••••'}
                       </p>
                       <p className="text-green-600 text-xs md:text-sm">
                         +{portfolioData.returnPercentage.toFixed(2)}% total return
@@ -1242,7 +1242,7 @@ const Dashboard: React.FC = () => {
                       <p className="text-xs md:text-sm font-medium text-gray-600 mb-2">TOTAL RETURN</p>
                       <div className="flex flex-col space-y-1 mb-2">
                         <p className="text-base md:text-lg lg:text-xl font-bold text-gray-900 truncate">
-                          {balanceVisible ? `${portfolioData.totalReturn.toFixed(4)} ETH` : '••••••'}
+                          {balanceVisible ? `${portfolioData.totalReturn.toFixed(4)} S` : '••••••'}
                         </p>
                         <Badge variant="secondary" className="bg-green-100 text-green-800 text-xs w-fit">
                           +{portfolioData.returnPercentage.toFixed(2)}%
@@ -1263,7 +1263,7 @@ const Dashboard: React.FC = () => {
                     <div className="flex-1 min-w-0 pr-2">
                       <p className="text-xs md:text-sm font-medium text-gray-600 mb-2">YEARLY INCOME</p>
                       <p className="text-base md:text-lg lg:text-xl font-bold text-gray-900 mb-2 truncate">
-                        {balanceVisible ? `${portfolioData.monthlyIncome.toFixed(4)} ETH` : '••••••'}
+                        {balanceVisible ? `${portfolioData.monthlyIncome.toFixed(4)} S` : '••••••'}
                       </p>
                       <p className="text-green-600 text-xs md:text-sm">8% yield annually</p>
                     </div>
@@ -1370,7 +1370,7 @@ const Dashboard: React.FC = () => {
             ) : (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
                 {userAssets.map((asset, index) => {
-                  const assetValueETH = parseFloat(ethers.utils.formatEther(asset.price)) * asset.amount; // Convert Wei to ETH
+                  const assetValueETH = parseFloat(ethers.utils.formatEther(asset.price)) * asset.amount; // Convert Wei to S
                   const IconComponent = asset.type === 'Real Estate' ? Building : 
                                        asset.type === 'Invoice' ? FileText :
                                        asset.type === 'Commodity' ? Coins : Leaf;
@@ -1417,12 +1417,12 @@ const Dashboard: React.FC = () => {
                           </div>
                           <div className="bg-gray-50 p-2 md:p-3 rounded-lg">
                             <p className="text-xs font-medium text-gray-600 mb-1">TOTAL VALUE</p>
-                            <p className="text-sm md:text-lg font-bold text-green-600">{assetValueETH.toFixed(4)} ETH</p>
+                            <p className="text-sm md:text-lg font-bold text-green-600">{assetValueETH.toFixed(4)} S</p>
                           </div>
                           <div className="bg-gray-50 p-2 md:p-3 rounded-lg">
                             <p className="text-xs font-medium text-gray-600 mb-1">PRICE PER TOKEN</p>
                             <p className="text-sm md:text-lg font-bold text-gray-900">
-                              {parseFloat(ethers.utils.formatEther(asset.price)).toFixed(4)} ETH
+                              {parseFloat(ethers.utils.formatEther(asset.price)).toFixed(4)} S
                             </p>
                           </div>
                           <div className="bg-gray-50 p-2 md:p-3 rounded-lg">
@@ -1481,7 +1481,7 @@ const Dashboard: React.FC = () => {
                   <div>
                     <p className="text-xs md:text-sm font-medium text-gray-600">YEARLY INCOME</p>
                     <p className="text-lg md:text-2xl font-bold text-gray-900">
-                      {isConnected ? `${portfolioData.monthlyIncome.toFixed(4)} ETH` : 'Connect Wallet'}
+                      {isConnected ? `${portfolioData.monthlyIncome.toFixed(4)} S` : 'Connect Wallet'}
                     </p>
                   </div>
                 </div>
@@ -1691,10 +1691,10 @@ const Dashboard: React.FC = () => {
                               {transaction.amount} {transaction.amount === 1 ? 'token' : 'tokens'}
                             </td>
                             <td className="py-3 px-4 md:px-6 text-right text-xs md:text-sm font-bold text-gray-900">
-                              {parseFloat(transaction.price).toFixed(4)} ETH
+                              {parseFloat(transaction.price).toFixed(4)} S
                               {transaction.platformFee && parseFloat(transaction.platformFee) > 0 && (
                                 <div className="text-xs text-gray-500">
-                                  Fee: {parseFloat(transaction.platformFee).toFixed(4)} ETH
+                                  Fee: {parseFloat(transaction.platformFee).toFixed(4)} S
                                 </div>
                               )}
                             </td>
@@ -2276,13 +2276,13 @@ const Dashboard: React.FC = () => {
                 <div className="bg-gray-50 p-3 rounded-lg">
                   <p className="text-xs font-medium text-gray-600 mb-1">PRICE PER TOKEN</p>
                   <p className="text-lg font-bold text-green-600">
-                    {parseFloat(ethers.utils.formatEther(selectedAssetForDetails.price)).toFixed(6)} ETH
+                    {parseFloat(ethers.utils.formatEther(selectedAssetForDetails.price)).toFixed(6)} S
                   </p>
                 </div>
                 <div className="bg-gray-50 p-3 rounded-lg">
                   <p className="text-xs font-medium text-gray-600 mb-1">TOTAL VALUE</p>
                   <p className="text-lg font-bold text-green-600">
-                    {(parseFloat(ethers.utils.formatEther(selectedAssetForDetails.price)) * selectedAssetForDetails.amount).toFixed(6)} ETH
+                    {(parseFloat(ethers.utils.formatEther(selectedAssetForDetails.price)) * selectedAssetForDetails.amount).toFixed(6)} S
                   </p>
                 </div>
               </div>
@@ -2321,7 +2321,7 @@ const Dashboard: React.FC = () => {
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-300">Network:</span>
-                    <span className="font-medium">Arbitrum Sepolia</span>
+                    <span className="font-medium">Sonic Testnet</span>
                   </div>
                   {selectedAssetForDetails.metadataURI && (
                     <div className="flex justify-between">
@@ -2352,7 +2352,7 @@ const Dashboard: React.FC = () => {
                   <div className="text-center">
                     <p className="text-green-700 font-medium">Monthly Income</p>
                     <p className="text-xl font-bold text-green-600">
-                      {((parseFloat(ethers.utils.formatEther(selectedAssetForDetails.price)) * selectedAssetForDetails.amount) * 0.08 / 12).toFixed(6)} ETH
+                      {((parseFloat(ethers.utils.formatEther(selectedAssetForDetails.price)) * selectedAssetForDetails.amount) * 0.08 / 12).toFixed(6)} S
                     </p>
                     <p className="text-xs text-green-600">Estimated</p>
                   </div>
@@ -2417,7 +2417,7 @@ const Dashboard: React.FC = () => {
                   <div>
                     <p className="text-gray-600">Price per Token</p>
                     <p className="font-bold text-green-600">
-                      {(parseFloat(selectedAsset.price) / Math.pow(10, 18)).toFixed(4)} ETH
+                      {(parseFloat(selectedAsset.price) / Math.pow(10, 18)).toFixed(4)} S
                     </p>
                   </div>
                 </div>
@@ -2460,30 +2460,30 @@ const Dashboard: React.FC = () => {
                         <div className="flex justify-between">
                           <span className="text-blue-700">Price per token:</span>
                           <span className="font-medium text-blue-900">
-                            {parseFloat(ethers.utils.formatEther(tokenPrice)).toFixed(6)} ETH
+                            {parseFloat(ethers.utils.formatEther(tokenPrice)).toFixed(6)} S
                           </span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-blue-700">Total value:</span>
                           <span className="font-medium text-blue-900">
-                            {parseFloat(ethers.utils.formatEther(totalValue)).toFixed(6)} ETH
+                            {parseFloat(ethers.utils.formatEther(totalValue)).toFixed(6)} S
                           </span>
                         </div>
                         <div className="border-t border-blue-200 pt-2">
                           <div className="flex justify-between text-red-600">
                             <span>Platform fee (1%):</span>
                             <span className="font-medium">
-                              -{parseFloat(ethers.utils.formatEther(platformFee)).toFixed(6)} ETH
+                              -{parseFloat(ethers.utils.formatEther(platformFee)).toFixed(6)} S
                             </span>
                           </div>
                           <div className="flex justify-between font-bold text-green-600 mt-1">
                             <span>You receive:</span>
-                            <span>{parseFloat(ethers.utils.formatEther(youReceive)).toFixed(6)} ETH</span>
+                            <span>{parseFloat(ethers.utils.formatEther(youReceive)).toFixed(6)} S</span>
                           </div>
                         </div>
                         <div className="mt-3 p-2 bg-yellow-50 rounded border border-yellow-200">
                           <p className="text-xs text-yellow-800">
-                            <strong>Note:</strong> You will pay {parseFloat(ethers.utils.formatEther(platformFee)).toFixed(6)} ETH as platform fee when confirming this transaction.
+                            <strong>Note:</strong> You will pay {parseFloat(ethers.utils.formatEther(platformFee)).toFixed(6)} S as platform fee when confirming this transaction.
                           </p>
                         </div>
                       </div>

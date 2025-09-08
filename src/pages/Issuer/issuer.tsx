@@ -67,7 +67,7 @@ const Issuer: React.FC = () => {
   const [nftDescription, setNftDescription] = useState('');
   const [nftAssetType, setNftAssetType] = useState(0);
   const [nftPriceToken, setNftPriceToken] = useState('USD');
-  const [nftPricePerToken, setNftPricePerToken] = useState('1.0'); // Price per token in ETH (used for both reference and marketplace)
+  const [nftPricePerToken, setNftPricePerToken] = useState('1.0'); // Price per token in S (used for both reference and marketplace)
   const [nftEarnXP, setNftEarnXP] = useState('32000');
   const [nftImageFiles, setNftImageFiles] = useState<File[]>([]);
   const [nftId, setNftId] = useState('');
@@ -1315,13 +1315,13 @@ const Issuer: React.FC = () => {
                             <div className="flex justify-between">
                               <span className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>Price per Token:</span>
                               <span className={`font-bold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
-                                {ethers.utils.formatEther(listing.price)} ETH
+                                {ethers.utils.formatEther(listing.price)} S
                               </span>
                             </div>
                             <div className="flex justify-between">
                               <span className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>Total Value:</span>
                               <span className={`font-bold text-green-500`}>
-                                {(parseFloat(ethers.utils.formatEther(listing.price)) * listing.amount).toFixed(4)} ETH
+                                {(parseFloat(ethers.utils.formatEther(listing.price)) * listing.amount).toFixed(4)} S
                               </span>
                             </div>
                           </div>
@@ -1478,7 +1478,7 @@ const Issuer: React.FC = () => {
                     </select>
                   </LabelInputContainer>
                   <LabelInputContainer>
-                    <Label htmlFor="nftPricePerToken" className={`${isDarkMode ? 'text-gray-200' : 'text-gray-700'}`}>Price per Token (ETH)</Label>
+                    <Label htmlFor="nftPricePerToken" className={`${isDarkMode ? 'text-gray-200' : 'text-gray-700'}`}>Price per Token (S)</Label>
                     <Input 
                       id="nftPricePerToken" 
                       value={nftPricePerToken} 
@@ -1490,7 +1490,7 @@ const Issuer: React.FC = () => {
                       className={`${isDarkMode ? 'border-gray-600 bg-gray-800 text-white placeholder:text-gray-400' : 'border-gray-300 bg-white text-gray-900 placeholder:text-gray-500'}`} 
                     />
                     <p className={`text-xs mt-1 ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-                      Price per token in ETH (will be used for marketplace listing)
+                      Price per token in S (will be used for marketplace listing)
                     </p>
                   </LabelInputContainer>
                   <LabelInputContainer>
@@ -1652,7 +1652,7 @@ const Issuer: React.FC = () => {
                       </div>
                       <div className="flex justify-between">
                         <span className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>Price per Token:</span>
-                        <span className={`${isDarkMode ? 'text-white' : 'text-gray-900'} font-medium`}>{nftPricePerToken} ETH</span>
+                        <span className={`${isDarkMode ? 'text-white' : 'text-gray-900'} font-medium`}>{nftPricePerToken} S</span>
                       </div>
                       <div className="flex justify-between">
                         <span className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>Images:</span>

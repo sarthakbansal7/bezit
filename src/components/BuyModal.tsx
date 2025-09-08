@@ -43,7 +43,7 @@ const BuyModal: React.FC<BuyModalProps> = ({ asset, onClose, onSuccess, tokenPri
   });
 
   // Calculate costs with platform fee
-  const pricePerTokenETH = parseFloat(safePrice) / Math.pow(10, 18); // Convert Wei to ETH for display
+  const pricePerTokenETH = parseFloat(safePrice) / Math.pow(10, 18); // Convert Wei to S for display
   
   // Validate that we have a valid price before calculations
   if (!pricePerTokenETH || pricePerTokenETH <= 0 || !isFinite(pricePerTokenETH)) {
@@ -235,7 +235,7 @@ const BuyModal: React.FC<BuyModalProps> = ({ asset, onClose, onSuccess, tokenPri
       // Check balance
       const balance = await signer.getBalance();
       if (balance.lt(totalCostWei)) {
-        throw new Error('Insufficient ETH balance for purchase including platform fee');
+        throw new Error('Insufficient S balance for purchase including platform fee');
       }
       
       // Create marketplace contract instance
@@ -334,7 +334,7 @@ const BuyModal: React.FC<BuyModalProps> = ({ asset, onClose, onSuccess, tokenPri
                   {formatPriceInUSD(pricePerTokenETH, tokenPrice)}
                 </div>
                 <div className="text-sm text-gray-500 mt-1">
-                  {pricePerTokenETH.toFixed(4)} ETH each
+                  {pricePerTokenETH.toFixed(4)} S each
                 </div>
               </div>
             </div>
@@ -383,7 +383,7 @@ const BuyModal: React.FC<BuyModalProps> = ({ asset, onClose, onSuccess, tokenPri
                       {formatPriceInUSD(subtotalETH, tokenPrice)}
                     </span>
                     <span className="text-sm text-gray-600">
-                      {subtotalETH.toFixed(4)} ETH
+                      {subtotalETH.toFixed(4)} S
                     </span>
                   </div>
                 </div>
@@ -396,7 +396,7 @@ const BuyModal: React.FC<BuyModalProps> = ({ asset, onClose, onSuccess, tokenPri
                       {formatPriceInUSD(platformFeeETH, tokenPrice)}
                     </span>
                     <span className="text-sm text-orange-500">
-                      {platformFeeETH.toFixed(4)} ETH
+                      {platformFeeETH.toFixed(4)} S
                     </span>
                   </div>
                 </div>
@@ -412,7 +412,7 @@ const BuyModal: React.FC<BuyModalProps> = ({ asset, onClose, onSuccess, tokenPri
                       {formatPriceInUSD(totalCostETH, tokenPrice)}
                     </span>
                     <span className="text-sm text-gray-600">
-                      {totalCostETH.toFixed(4)} ETH
+                      {totalCostETH.toFixed(4)} S
                     </span>
                   </div>
                 </div>
