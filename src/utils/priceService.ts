@@ -19,10 +19,9 @@ export const fetchETHPrice = async (): Promise<number> => {
   try {
     console.log('🔄 Fetching token price from CoinGecko...');
     
-    // TODO: Update to use Sonic token ID when available on CoinGecko
-    // For now using ETH as price reference
+    // Using Sonic token ID from CoinGecko
     const response = await fetch(
-      'https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd',
+      'https://api.coingecko.com/api/v3/simple/price?ids=sonic-3&vs_currencies=usd',
       {
         method: 'GET',
         headers: {
@@ -36,7 +35,7 @@ export const fetchETHPrice = async (): Promise<number> => {
     }
 
     const data = await response.json();
-    const tokenPrice = data.ethereum?.usd;
+    const tokenPrice = data['sonic-3']?.usd;
 
     if (!tokenPrice || typeof tokenPrice !== 'number') {
       throw new Error('Invalid token price data from CoinGecko');

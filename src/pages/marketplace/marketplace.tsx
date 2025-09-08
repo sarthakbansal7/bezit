@@ -19,9 +19,9 @@ import { MARKETPLACE_ABI } from '@/utils/marketplaceABI';
 // Alternative RPC endpoints for Sonic Testnet
 const SONIC_TESTNET_RPC_URLS = [
   "https://rpc.testnet.soniclabs.com",
-  "https://rpc.testnet.soniclabs.com", // Backup - same URL as primary for now
-  "https://rpc.testnet.soniclabs.com", // Backup - same URL as primary for now
-  "https://rpc.testnet.soniclabs.com"  // Backup - same URL as primary for now
+  "https://rpc.blaze.soniclabs.com", // Alternative endpoint
+  "https://testnet-rpc.soniclabs.com", // Alternative endpoint
+  "https://rpc.sonic-testnet.gateway.fm" // Gateway FM endpoint
 ];
 
 // Demo marketplace data for fallback when RPC is having issues
@@ -132,6 +132,7 @@ const Marketplace: React.FC = () => {
       console.log('🔄 Initializing marketplace contract...');
       console.log('Contract address:', MARKETPLACE_CONTRACT);
       console.log('Network:', ACTIVE_NETWORK);
+      console.log('RPC URL:', NETWORK_CONFIG[ACTIVE_NETWORK].rpcUrl);
       
       let providerToUse;
       
@@ -144,9 +145,9 @@ const Marketplace: React.FC = () => {
             console.log(`🔄 Trying RPC endpoint ${i + 1}/${SONIC_TESTNET_RPC_URLS.length}: ${SONIC_TESTNET_RPC_URLS[i]}`);
             providerToUse = new ethers.providers.JsonRpcProvider(SONIC_TESTNET_RPC_URLS[i]);
             
-            // Test the connection
-            await providerToUse.getNetwork();
-            console.log(`✅ Successfully connected to RPC endpoint ${i + 1}`);
+            // Test the connection with a simple call
+            const network = await providerToUse.getNetwork();
+            console.log(`✅ Successfully connected to RPC endpoint ${i + 1}, Chain ID: ${network.chainId}`);
             break;
           } catch (rpcError) {
             console.warn(`❌ RPC endpoint ${i + 1} failed:`, rpcError);
@@ -168,7 +169,51 @@ const Marketplace: React.FC = () => {
           console.log('Expected Chain ID:', NETWORK_CONFIG[ACTIVE_NETWORK].chainId);
           
           if (network.chainId !== NETWORK_CONFIG[ACTIVE_NETWORK].chainId) {
-            throw new Error(`Wrong network! Please switch to ${NETWORK_CONFIG[ACTIVE_NETWORK].name}`);
+            const errorMsg = `Wrong network! Please switch to ${NETWORK_CONFIG[ACTIVE_NETWORK].name} (Chain ID: ${NETWORK_CONFIG[ACTIVE_NETWORK].chainId})`;
+            console.error('❌ Network mismatch:', errorMsg);
+            
+            // Try to switch network automatically
+            try {
+              console.log('🔄 Attempting to switch network automatically...');
+              const ethereum = (window as any).ethereum;
+              if (ethereum) {
+                await ethereum.request({
+                  method: 'wallet_switchEthereumChain',
+                  params: [{ chainId: `0x${NETWORK_CONFIG[ACTIVE_NETWORK].chainId.toString(16)}` }],
+                });
+                console.log('✅ Network switched successfully!');
+                // Retry initialization after network switch
+                setTimeout(() => initializeContract(), 1000);
+                return;
+              }
+            } catch (switchError: any) {
+              console.warn('⚠️ Could not switch network automatically:', switchError);
+              
+              // If network doesn't exist, try to add it
+              if (switchError.code === 4902) {
+                try {
+                  console.log('🔄 Attempting to add Sonic Testnet to wallet...');
+                  const ethereum = (window as any).ethereum;
+                  await ethereum.request({
+                    method: 'wallet_addEthereumChain',
+                    params: [{
+                      chainId: `0x${NETWORK_CONFIG[ACTIVE_NETWORK].chainId.toString(16)}`,
+                      chainName: NETWORK_CONFIG[ACTIVE_NETWORK].name,
+                      nativeCurrency: NETWORK_CONFIG[ACTIVE_NETWORK].nativeCurrency,
+                      rpcUrls: [NETWORK_CONFIG[ACTIVE_NETWORK].rpcUrl],
+                      blockExplorerUrls: [NETWORK_CONFIG[ACTIVE_NETWORK].blockExplorer]
+                    }]
+                  });
+                  console.log('✅ Sonic Testnet added to wallet!');
+                  setTimeout(() => initializeContract(), 1000);
+                  return;
+                } catch (addError) {
+                  console.error('❌ Failed to add network:', addError);
+                }
+              }
+            }
+            
+            throw new Error(errorMsg);
           }
         } catch (networkError) {
           console.error('❌ Network check failed:', networkError);
@@ -182,32 +227,41 @@ const Marketplace: React.FC = () => {
       const signerToUse = signer || providerToUse;
       const contract = new ethers.Contract(MARKETPLACE_CONTRACT, MARKETPLACE_ABI, signerToUse);
       
-      // Verify contract exists with retry logic
-      let contractExists = false;
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        try {
-          console.log(`🔍 Verifying contract exists (attempt ${attempt}/3)...`);
-          const code = await providerToUse.getCode(MARKETPLACE_CONTRACT);
-          if (code === '0x') {
-            throw new Error('No contract found at address');
-          }
-          contractExists = true;
-          console.log('✅ Contract verified at address:', MARKETPLACE_CONTRACT);
-          break;
-        } catch (verifyError) {
-          console.warn(`⚠️ Contract verification attempt ${attempt} failed:`, verifyError);
-          if (attempt === 3) {
-            throw new Error('Marketplace contract not found after 3 attempts');
-          }
-          // Wait before retry
-          await new Promise(resolve => setTimeout(resolve, 1000));
+      // Verify contract exists with retry logic (same as admin dashboard)
+      try {
+        console.log('🔍 Verifying marketplace contract exists...');
+        console.log('🔗 Contract Explorer URL:', `${NETWORK_CONFIG[ACTIVE_NETWORK].blockExplorer}/address/${MARKETPLACE_CONTRACT}`);
+        
+        const code = await providerToUse.getCode(MARKETPLACE_CONTRACT);
+        console.log('📝 Contract code length:', code.length);
+        console.log('📝 Contract code preview:', code.slice(0, 100) + '...');
+        
+        if (code === '0x') {
+          console.error('❌ No contract found at address:', MARKETPLACE_CONTRACT);
+          console.error('🔗 Please verify the contract exists at:', `${NETWORK_CONFIG[ACTIVE_NETWORK].blockExplorer}/address/${MARKETPLACE_CONTRACT}`);
+          throw new Error('Marketplace contract not found at the specified address');
         }
+        console.log('✅ Marketplace contract verified at address:', MARKETPLACE_CONTRACT);
+        
+        // Test a simple function call to verify contract is working (like admin dashboard)
+        try {
+          console.log('🔍 Testing contract call with getAllListings...');
+          const testCall = await contract.getAllListings();
+          console.log('✅ Contract call successful, listings response:', testCall);
+          console.log('✅ Contract is functional and responding to calls');
+        } catch (testError) {
+          console.warn('⚠️ Contract test call failed but contract exists:', testError);
+          console.log('📝 This might be normal if no listings exist yet');
+          // Don't throw here - the contract might exist but have different functions or no data
+        }
+      } catch (verifyError) {
+        console.error('❌ Error verifying contract:', verifyError);
+        console.error('🔗 Contract should be at:', `${NETWORK_CONFIG[ACTIVE_NETWORK].blockExplorer}/address/${MARKETPLACE_CONTRACT}`);
+        throw new Error('Failed to verify marketplace contract');
       }
       
-      if (contractExists) {
-        setMarketplaceContract(contract);
-        console.log('✅ Marketplace contract initialized successfully');
-      }
+      setMarketplaceContract(contract);
+      console.log('✅ Marketplace contract initialized successfully');
       
     } catch (error: any) {
       console.error('❌ Error initializing marketplace contract:', error);
@@ -756,6 +810,69 @@ const Marketplace: React.FC = () => {
             <div className="text-black text-xl font-medium">Connection Error</div>
             <div className="text-gray-600 text-sm">{error}</div>
             <div className="flex flex-col space-y-2">
+              {error.includes('Wrong network') && (
+                <button 
+                  onClick={async () => {
+                    try {
+                      const ethereum = (window as any).ethereum;
+                      if (ethereum) {
+                        // Try to switch to Sonic Testnet
+                        try {
+                          await ethereum.request({
+                            method: 'wallet_switchEthereumChain',
+                            params: [{ chainId: `0x${NETWORK_CONFIG[ACTIVE_NETWORK].chainId.toString(16)}` }],
+                          });
+                          toast.success('Switched to Sonic Testnet!');
+                          setError('');
+                          initializeContract();
+                        } catch (switchError: any) {
+                          // If network doesn't exist, add it
+                          if (switchError.code === 4902) {
+                            await ethereum.request({
+                              method: 'wallet_addEthereumChain',
+                              params: [{
+                                chainId: `0x${NETWORK_CONFIG[ACTIVE_NETWORK].chainId.toString(16)}`,
+                                chainName: NETWORK_CONFIG[ACTIVE_NETWORK].name,
+                                nativeCurrency: NETWORK_CONFIG[ACTIVE_NETWORK].nativeCurrency,
+                                rpcUrls: [NETWORK_CONFIG[ACTIVE_NETWORK].rpcUrl],
+                                blockExplorerUrls: [NETWORK_CONFIG[ACTIVE_NETWORK].blockExplorer]
+                              }]
+                            });
+                            toast.success('Sonic Testnet added to wallet!');
+                            setError('');
+                            initializeContract();
+                          }
+                        }
+                      }
+                    } catch (error) {
+                      console.error('Failed to switch network:', error);
+                      toast.error('Failed to switch network. Please switch manually.');
+                    }
+                  }}
+                  className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center space-x-2"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                  </svg>
+                  <span>Switch to Sonic Testnet</span>
+                </button>
+              )}
+              
+              {/* Debug button to check contract manually */}
+              <button 
+                onClick={() => {
+                  const explorerUrl = `${NETWORK_CONFIG[ACTIVE_NETWORK].blockExplorer}/address/${MARKETPLACE_CONTRACT}`;
+                  console.log('🔗 Opening contract in explorer:', explorerUrl);
+                  window.open(explorerUrl, '_blank');
+                }}
+                className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors flex items-center justify-center space-x-2"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
+                <span>Verify Contract on Explorer</span>
+              </button>
+              
               <button 
                 onClick={() => {
                   setError('');
