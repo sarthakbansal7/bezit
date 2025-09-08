@@ -558,7 +558,7 @@ const Admin: React.FC = () => {
       return;
     }
 
-    console.log('🔄 Creating new issuer account:', userForm);
+    console.log(`🔄 Creating new ${userForm.role} account:`, userForm);
 
     // Validation
     if (!userForm.firstName || !userForm.lastName || !userForm.email || !userForm.password || !userForm.walletAddress) {
@@ -573,6 +573,34 @@ const Admin: React.FC = () => {
 
     if (userForm.password.length < 6) {
       toast.error('Password must be at least 6 characters long');
+      return;
+    }
+
+    // Validate name fields to match backend schema requirements
+    if (userForm.firstName.trim().length < 2) {
+      toast.error('First name must be at least 2 characters long');
+      return;
+    }
+
+    if (userForm.lastName.trim().length < 2) {
+      toast.error('Last name must be at least 2 characters long');
+      return;
+    }
+
+    if (userForm.firstName.trim().length > 50) {
+      toast.error('First name cannot exceed 50 characters');
+      return;
+    }
+
+    if (userForm.lastName.trim().length > 50) {
+      toast.error('Last name cannot exceed 50 characters');
+      return;
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(userForm.email)) {
+      toast.error('Please provide a valid email address');
       return;
     }
 
@@ -602,12 +630,23 @@ const Admin: React.FC = () => {
       };
 
       try {
-        await authApi.register(userData);
-        console.log('✅ User registered in backend successfully');
+        console.log('📤 Sending registration data:', userData);
+        const response = await authApi.register(userData);
+        console.log('✅ User registered in backend successfully:', response);
         toast.success('User registered in backend');
       } catch (backendError) {
         console.error('❌ Backend registration failed:', backendError);
-        toast.error('Failed to register user in backend');
+        console.error('❌ Registration data that failed:', userData);
+        
+        // Try to extract more specific error message
+        let errorMessage = 'Failed to register user in backend';
+        if (backendError && typeof backendError === 'object') {
+          if (backendError.message) {
+            errorMessage = backendError.message;
+          }
+        }
+        
+        toast.error(`Backend registration failed: ${errorMessage}`);
         setIsLoading(false);
         return;
       }

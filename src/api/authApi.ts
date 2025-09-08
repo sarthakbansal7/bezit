@@ -112,7 +112,21 @@ const handleResponse = async <T>(response: Response): Promise<T> => {
   const data = await response.json();
   
   if (!response.ok) {
-    throw new Error(data.message || `HTTP error! status: ${response.status}`);
+    console.error('API Error Response:', {
+      status: response.status,
+      statusText: response.statusText,
+      data: data
+    });
+    
+    // Include more details in the error message
+    let errorMessage = data.message || data.error || `HTTP error! status: ${response.status}`;
+    
+    // If there are specific validation errors, include them
+    if (data.errors && Array.isArray(data.errors)) {
+      errorMessage += ': ' + data.errors.join(', ');
+    }
+    
+    throw new Error(errorMessage);
   }
   
   return data;
