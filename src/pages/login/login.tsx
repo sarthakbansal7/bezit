@@ -288,7 +288,7 @@ const Login: React.FC = () => {
               </div>
             </div>
             
-            <h1 className="text-4xl font-bold mb-3">Sampatti</h1>
+            <h1 className="text-4xl font-bold mb-3">Bezit</h1>
             <p className="text-gray-300 text-lg mb-8">Investment Portfolio Management</p>
             
 
